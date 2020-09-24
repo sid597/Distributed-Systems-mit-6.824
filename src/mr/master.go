@@ -1,10 +1,11 @@
-package mr
+git clone git://g.csail.mit.edu/6.824-golabs-2020 6.824package mr
 
 import "log"
 import "net"
-import "os"
+//import "os"
 import "net/rpc"
 import "net/http"
+import "fmt"
 
 
 type Master struct {
@@ -24,6 +25,11 @@ func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
+func (m *Master) GetFilename(noArg *NoArgs, fn *Files) error {
+    fmt.Println(FileNames)
+    fn.Filename = FileNames[0]
+    return nil
+}
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -31,10 +37,10 @@ func (m *Master) Example(args *ExampleArgs, reply *ExampleReply) error {
 func (m *Master) server() {
 	rpc.Register(m)
 	rpc.HandleHTTP()
-	//l, e := net.Listen("tcp", ":1234")
-	sockname := masterSock()
-	os.Remove(sockname)
-	l, e := net.Listen("unix", sockname)
+	l, e := net.Listen("tcp", ":1234")
+//	sockname := masterSock()
+//	os.Remove(sockname)
+//	l, e := net.Listen("unix", sockname)
 	if e != nil {
 		log.Fatal("listen error:", e)
 	}
@@ -64,6 +70,8 @@ func MakeMaster(files []string, nReduce int) *Master {
 
 	// Your code here.
 
+    FileNames = files
+    fmt.Println(FileNames)
 
 	m.server()
 	return &m
