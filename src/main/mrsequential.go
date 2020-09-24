@@ -29,7 +29,7 @@ func main() {
 	}
 
 	mapf, reducef := loadPlugin(os.Args[1])
-
+    fmt.Println(mapf, reducef)
 	//
 	// read each input file,
 	// pass it to Map,
@@ -45,9 +45,12 @@ func main() {
 		if err != nil {
 			log.Fatalf("cannot read %v", filename)
 		}
+        fmt.Println(content)
 		file.Close()
+        fmt.Println(string(content))
 		kva := mapf(filename, string(content))
 		intermediate = append(intermediate, kva...)
+        //fmt.Println(intermediate)
 	}
 
 	//
@@ -91,10 +94,20 @@ func main() {
 // from a plugin file, e.g. ../mrapps/wc.so
 //
 func loadPlugin(filename string) (func(string, string) []mr.KeyValue, func(string, []string) string) {
+	// plugin is GO main package with exported functions and variavles that has 
+	// been built with -buildmode=plugin. Plugin implements loading and symbo; resolution
+    // open the plugin with Open
 	p, err := plugin.Open(filename)
+
+	// err is implemented as an interface so we can compare
+	// it with nil and see if there was an error 
+	// nil here means nil (as used in english)
 	if err != nil {
+        fmt.Println(err)
 		log.Fatalf("cannot load plugin %v", filename)
 	}
+
+    // Lookup searches for a symbol name
 	xmapf, err := p.Lookup("Map")
 	if err != nil {
 		log.Fatalf("cannot find Map in %v", filename)
