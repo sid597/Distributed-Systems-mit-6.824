@@ -23,11 +23,13 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
-type Files struct {
+type Task struct {
+    Id int
     Filename string
+    Type string
+    nReduce int
 }
 
-var FileNames []string
 
 type NoArgs struct {}
 
@@ -40,3 +42,13 @@ func masterSock() string {
 	s += strconv.Itoa(os.Getuid())
 	return s
 }
+
+/*
+TODO :
+- Create temporary file names 
+- Register worker on master with initial call 
+- Write worker contents in temperary file
+- Call done when all the map jobs are done
+- Create Master data structure to manage workers
+- Only increase worker ctr when a task is assigned
+*/
