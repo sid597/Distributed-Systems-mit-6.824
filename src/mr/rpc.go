@@ -23,7 +23,7 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
-type Task struct {
+type MapTaskData struct {
     Id int
     Filename string
     Type string

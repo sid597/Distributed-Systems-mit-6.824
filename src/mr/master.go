@@ -19,7 +19,7 @@ type MasterDetails struct {
 
 }
 
-type WorkerDetails struct {
+type IWorkerDetails struct {
     Id int
     Task string
     Filename string
@@ -29,6 +29,7 @@ type WorkerDetails struct {
 // The operations related to files should be global
 // so that one can access these without initializing or passing some other data to functions
 var (
+    R int
     Job Files
     Master MasterDetails
     WorkerCtr int
@@ -59,15 +60,15 @@ func (m *MasterDetails) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
-func (m *MasterDetails) GetFilename(noArg *NoArgs, fn *MapFile) error {
-    nw := NewWorkerDetails(Job.CurrentFile)
-    fmt.Println(nw)
-    fn.Name = nw.Filename
-//    if Job.CurrentFileCtr != Job.AllFilesLen - 1{
-//        IncreaseCurrentJobFileCtr()
-//    } else {
-//        Job.CurrentFile = NoNewFile
-//    }
+func (m *MasterDetails) GetFilename(noArg *NoArgs, fn *WorkerDetails) error {
+    // TODO : Somehow set the Currentfile to reduce file locations also
+    NewWorkerDetails(fn,Job.CurrentFile)
+    if Job.CurrentFileCtr != Job.FilesLen - 1{
+        IncreaseCurrentJobFileCtr()
+        WorkerCtr += 1
+    } else {
+        Job.CurrentFile = NoNewFile
+    }
     return nil
 }
 
@@ -85,7 +86,7 @@ func (m *MasterDetails) GetFilename(noArg *NoArgs, fn *MapFile) error {
 //
 func MakeMaster(files []string, nReduce int) *MasterDetails {
 	Master = MasterDetails{}
-
+    R = nReduce
 	// Your code here.
     NewJob(files)
     fmt.Println(Job.AllFiles)
@@ -134,15 +135,14 @@ func NewJob(files []string) {
     Job.FilesLen = len(files)
     Job.CurrentFileCtr = 0
     Job.CurrentFile = files[0]
-    //return f
 }
 
-func NewWorkerDetails(filename string) WorkerDetails {
-    w := WorkerDetails{}
-    w.Id = WorkerCtr
-    w.Filename = filename
-    w.Status = "in-progress"
-    return w
+func NewWorkerDetails(details *WorkerDetails,filename string) {
+    details.Id = WorkerCtr
+    details.MapFileName = filename
+    details.Status = "in-progress"
+    details.R = R
+    details.Task="MapT"
 }
 
 
@@ -168,5 +168,6 @@ func GetJobFile(ctr int) string {
 func IncreaseCurrentJobFileCtr() {
     Job.CurrentFileCtr += 1
     Job.CurrentFile = Job.AllFiles[Job.CurrentFileCtr]
+
 }
 
