@@ -26,16 +26,18 @@ type KeyValue struct {
 	Value string
 }
 
+
 type WorkerDetails struct {
     Id int
     Pid int
-    R int
-    Task string
-    MapFileName string
-    ReduceFileName string
-    Filename string
+    R int // TS
+    StartTime time.Time // task specific  TS
+    Task string // TS
+    MapFileName string // Ts
+    ReduceFileName string // TS
+    ReduceFileNo int // TS
     Status string
-    AllMapWorkers []int
+    AllMapWorkers []int // TS
 }
 
 var CurrentWorker WorkerDetails
@@ -57,19 +59,23 @@ var CurrentWorker WorkerDetails
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) bool {
     CurrentWorker = GetTask()
     // A special keyword to tell if all files are done
-    for CurrentWorker.MapFileName != NoNewFile {
-        if CurrentWorker.Task == "MapT"{
+    for CurrentWorker.Task != "Done" {
+        if CurrentWorker.Task == "Map"{
             res := MapTask(CurrentWorker.MapFileName, mapf)
             // time.Sleep(500 * time.Millisecond)   // Used to test map running in parallel or not
             // TODO : Make a  rpc to tell master this task is done 
             fmt.Println(res)
-        } else if CurrentWorker.Task == "ReduceT" {
+        } else if CurrentWorker.Task == "Wait" {
+            time.Sleep(1 * time.Second)
+        } else if CurrentWorker.Task == "Reduce" {
             res := ReduceTask(CurrentWorker.ReduceFileNo, CurrentWorker.AllMapWorkers, reducef)
             time.Sleep(500 * time.Millisecond)   // Used to test reduce running in parallel or not
             // TODO : Make a  rpc to tell master this task is done 
+            fmt.Println(res)
         }
-        CurrentWorker  = GetTask()
+
         fmt.Println(CurrentWorker)
+        CurrentWorker  = GetTask()
     }
     return true
 }
@@ -175,7 +181,8 @@ func ihash(key string) int {
 func GetTask() WorkerDetails{
     na := NoArgs{}
     NewTask := WorkerDetails{}
-    call("MasterDetails.GetFilename",&na, &NewTask)
+    call("MasterDetails.AssignNewTask",&na, &NewTask)
+    NewTask.StartTime = time.Now()
     return NewTask
 }
 
@@ -186,6 +193,9 @@ func CreateInterFiles() bool  {
 
     for i:= 0; i < CurrentWorker.R; i++{
         tFile := fmt.Sprint("mr-inter-" , CurrentWorker.Id , "-" , i ,".tmp")
+
+
+
         nFile,err := os.Create(tFile)
         if err != nil {
             fmt.Println(err)

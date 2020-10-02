@@ -1,11 +1,13 @@
 package mr
 
-import "log"
-import "net"
-//import "os"
-import "net/rpc"
-import "net/http"
-import "fmt"
+import (
+    "fmt"
+    "log"
+    "net/rpc"
+    "net/http"
+    "net"
+    "time"
+)
 
 
 ////////////////////////////////////////////////
@@ -13,67 +15,59 @@ import "fmt"
 ////////////////////////////////////////////////
 
 type MasterDetails struct {
-	// Your definitions here.
-    AllWorkers []WorkerDetails
-    UnfinishedTasks []string
-
-}
-
-type IWorkerDetails struct {
-    Id int
-    Task string
-    Filename string
-    Status string
-}
-
-// The operations related to files should be global
-// so that one can access these without initializing or passing some other data to functions
-var (
+    CurrentTaskType string
+    MapTaskFiles []string
+    ReduceTaskNumbers []int
     R int
-    Job Files
-    Master MasterDetails
+    CompletedMapTasks []int
+    //OnGoingMapTasks []
     WorkerCtr int
-    NoNewFile string = "No New FIle234"
-)
-
-type Files struct {
-    AllFiles []string
-    FilesLen, CurrentFileCtr int
-    CurrentFile string
 }
 
+var Master MasterDetails
+var NoNewFile string =  "No New FIle234"
 
 
 ////////////////////////////////////////////////
 // RPC Handlers
 ////////////////////////////////////////////////
 
-// Your code here -- RPC handlers for the worker to call.
-
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
 func (m *MasterDetails) Example(args *ExampleArgs, reply *ExampleReply) error {
 	reply.Y = args.X + 1
 	return nil
 }
 
-func (m *MasterDetails) GetFilename(noArg *NoArgs, fn *WorkerDetails) error {
-    // TODO : Somehow set the Currentfile to reduce file locations also
-    NewWorkerDetails(fn,Job.CurrentFile)
-    if Job.CurrentFileCtr != Job.FilesLen - 1{
-        IncreaseCurrentJobFileCtr()
-        WorkerCtr += 1
-    } else {
-        Job.CurrentFile = NoNewFile
+
+
+func (m *MasterDetails) AssignNewTask(args *NoArgs, nw *WorkerDetails) error {
+    // TODO : if all the map tasks are done assign reduce task also set current task type to Reduce else assign a new Map task
+    // Should I increase the worker ctr on every 
+    if len(Master.CompletedMapTasks) != len(Master.MapTaskFiles) {
+        if len(Master.MapTaskFiles) > 0 {
+            nw.Task = "Map"
+            nw.MapFileName, Master.MapTaskFiles = Master.MapTaskFiles[0], Master.MapTaskFiles[1:]
+            nw.Id = Master.WorkerCtr
+            nw.R = Master.R
+            fmt.Println(nw,time.Now())
+
+            Master.WorkerCtr += 1
+        } else {
+            nw.Task = "Wait"
+        }
+    } else if len(Master.CompletedMapTasks) == len(Master.MapTaskFiles) {
+        if len(Master.ReduceTaskNumbers) > 0 {
+            nw.Task = "Reduce"
+            nw.ReduceFileNo, Master.ReduceTaskNumbers = Master.ReduceTaskNumbers[0], Master.ReduceTaskNumbers[1:]
+            nw.AllMapWorkers = Master.CompletedMapTasks
+        } else {
+            nw.Task = "Done"
+        }
     }
+
     return nil
+
+
 }
-
-
-
 ////////////////////////////////////////////////
 // Master server 
 ////////////////////////////////////////////////
@@ -86,14 +80,26 @@ func (m *MasterDetails) GetFilename(noArg *NoArgs, fn *WorkerDetails) error {
 //
 func MakeMaster(files []string, nReduce int) *MasterDetails {
 	Master = MasterDetails{}
-    R = nReduce
-	// Your code here.
-    NewJob(files)
-    fmt.Println(Job.AllFiles)
+    NewMaster(files, nReduce)
+    fmt.Println(Master)
 
-	Master.server()
+    Master.server()
 	return &Master
 }
+
+func NewMaster(files []string, nReduce int) {
+    Master.MapTaskFiles = files
+    // Master.MapTaskFiles = append(Master.MapTaskFiles, NoNewFile)
+    for i := 0; i < nReduce; i++{
+        Master.ReduceTaskNumbers = append(Master.ReduceTaskNumbers, i)
+    }
+    Master.R = nReduce
+    Master.CurrentTaskType = "Map"
+
+}
+////////////////////////////////////////////////
+// Master server 
+////////////////////////////////////////////////
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -122,52 +128,5 @@ func (m *MasterDetails) Done() bool {
 
 
     return ret
-}
-
-////////////////////////////////////////////////
-// Helper functions  
-/////////////////////////////////////////////////
-
-// New Files struct invocation
-func NewJob(files []string) {
-    Job = Files{}
-    Job.AllFiles = files
-    Job.FilesLen = len(files)
-    Job.CurrentFileCtr = 0
-    Job.CurrentFile = files[0]
-}
-
-func NewWorkerDetails(details *WorkerDetails,filename string) {
-    details.Id = WorkerCtr
-    details.MapFileName = filename
-    details.Status = "in-progress"
-    details.R = R
-    details.Task="MapT"
-}
-
-
-
-func AddToWorkersList(worker WorkerDetails) {
-    Master.AllWorkers = append(Master.AllWorkers, worker)
-}
-
-func UpdateJobData(ctr int) bool {
-    if Job.CurrentFileCtr == Job.FilesLen {
-        return false
-    } else {
-        Job.CurrentFileCtr = ctr
-        Job.CurrentFile = Job.AllFiles[Job.CurrentFileCtr]
-    }
-    return true
-}
-
-func GetJobFile(ctr int) string {
-    return Job.AllFiles[ctr]
-}
-
-func IncreaseCurrentJobFileCtr() {
-    Job.CurrentFileCtr += 1
-    Job.CurrentFile = Job.AllFiles[Job.CurrentFileCtr]
-
 }
 
