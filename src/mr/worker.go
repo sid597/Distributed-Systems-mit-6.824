@@ -58,23 +58,28 @@ var CurrentWorker WorkerDetails
 //
 func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) bool {
     CurrentWorker = GetTask()
+    ///fmt.Println("Current worker details are :",CurrentWorker)
     // A special keyword to tell if all files are done
     for CurrentWorker.Task != "Done" {
         if CurrentWorker.Task == "Map"{
-            res := MapTask(CurrentWorker.MapFileName, mapf)
-            // time.Sleep(500 * time.Millisecond)   // Used to test map running in parallel or not
-            // TODO : Make a  rpc to tell master this task is done 
-            fmt.Println(res)
+            MapTask(CurrentWorker.MapFileName, mapf)
+             time.Sleep(50 * time.Millisecond)   // Used to test map running in parallel or not
+             TellMasterIAmDone(CurrentWorker)
+            ///res := TellMasterIAmDone(CurrentWorker)
+            ///fmt.Println("Master reply for our Done request, for Map worker ",CurrentWorker.Id,res.Message)
+
         } else if CurrentWorker.Task == "Wait" {
             time.Sleep(1 * time.Second)
         } else if CurrentWorker.Task == "Reduce" {
-            res := ReduceTask(CurrentWorker.ReduceFileNo, CurrentWorker.AllMapWorkers, reducef)
-            time.Sleep(500 * time.Millisecond)   // Used to test reduce running in parallel or not
-            // TODO : Make a  rpc to tell master this task is done 
-            fmt.Println(res)
+            ReduceTask(CurrentWorker.ReduceFileNo, CurrentWorker.AllMapWorkers, reducef)
+            time.Sleep(50 * time.Millisecond)   // Used to test reduce running in parallel or not
+            TellMasterIAmDone(CurrentWorker)
+            ///res := TellMasterIAmDone(CurrentWorker)
+            ///fmt.Println("Master reply for our Done request, for Reduce  worker ",CurrentWorker.Id,res.Message)
+
         }
 
-        fmt.Println(CurrentWorker)
+        //fmt.Println(CurrentWorker)
         CurrentWorker  = GetTask()
     }
     return true
@@ -127,6 +132,7 @@ func ReduceTask(reduceFileNo int,listOfMapWorkerFiles []int, reducef func(string
     // get all the files to read from NXM buckets
     // load to memory(in a slice)
     intermediate := GetKvForReduce(listOfMapWorkerFiles, reduceFileNo)
+    //fmt.Println("intermediate values are ",intermediate)
     // sort the slice, Map-Reduce paper states if the intermediate data is too large for memory
     // we send it for external sort
     sort.Sort(ByKey(intermediate))
@@ -154,6 +160,7 @@ func ReduceTask(reduceFileNo int,listOfMapWorkerFiles []int, reducef func(string
 			values = append(values, intermediate[k].Value)
 		}
 		output := reducef(intermediate[i].Key, values)
+        //fmt.Println("intermediate key for reduce is : ",intermediate[i].Key)
         // write to file
 		fmt.Fprintf(rFile, "%v %v\n", intermediate[i].Key, output)
 
@@ -177,19 +184,28 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+// Tell Master worker is done
+func TellMasterIAmDone(worker WorkerDetails ) MessageForWorker {
+    Msg := MessageForWorker{}
+    call("MasterDetails.WorkerDone", &worker, &Msg)
+    ///fmt.Println("Message received is ",Msg.Message)
+    return Msg
+}
+
 // Ask for new task from Master
 func GetTask() WorkerDetails{
     na := NoArgs{}
     NewTask := WorkerDetails{}
     call("MasterDetails.AssignNewTask",&na, &NewTask)
     NewTask.StartTime = time.Now()
+    ///fmt.Println("Task is :", NewTask.Task)
     return NewTask
 }
 
 
 // Create R(no of reduce files to create) Temporary Map files 
 func CreateInterFiles() bool  {
-    fmt.Println("creating new interm files",CurrentWorker.R)
+    //fmt.Println("creating new interm files",CurrentWorker.R)
 
     for i:= 0; i < CurrentWorker.R; i++{
         tFile := fmt.Sprint("mr-inter-" , CurrentWorker.Id , "-" , i ,".tmp")
@@ -239,6 +255,7 @@ func GetKvForReduce(listOfMapWorkerFiles []int, reduceFileNo int) []KeyValue {
           if err := dec.Decode(&kv); err != nil {
             break
           }
+          //fmt.Println("Kv for this ket is ",kv)
           kva = append(kva, kv)
         }
         file.Close()
@@ -270,6 +287,6 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 		return true
 	}
 
-	fmt.Println(err)
+    fmt.Println("Error in call function for server",err)
 	return false
 }
