@@ -30,6 +30,11 @@ type MapTaskData struct {
     nReduce int
 }
 
+type MessageForWorker struct {
+    Message string
+
+}
+
 
 type NoArgs struct {}
 
@@ -43,12 +48,3 @@ func masterSock() string {
 	return s
 }
 
-/*
-TODO :
-- Create temporary file names 
-- Register worker on master with initial call 
-- Write worker contents in temperary file
-- Call done when all the map jobs are done
-- Create Master data structure to manage workers
-- Only increase worker ctr when a task is assigned
-*/

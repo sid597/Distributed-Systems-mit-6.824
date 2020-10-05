@@ -63,7 +63,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
     for CurrentWorker.Task != "Done" {
         if CurrentWorker.Task == "Map"{
             MapTask(CurrentWorker.MapFileName, mapf)
-             time.Sleep(50 * time.Millisecond)   // Used to test map running in parallel or not
+             //time.Sleep(50 * time.Millisecond)   // Used to test map running in parallel or not
              TellMasterIAmDone(CurrentWorker)
             ///res := TellMasterIAmDone(CurrentWorker)
             ///fmt.Println("Master reply for our Done request, for Map worker ",CurrentWorker.Id,res.Message)
@@ -72,7 +72,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
             time.Sleep(1 * time.Second)
         } else if CurrentWorker.Task == "Reduce" {
             ReduceTask(CurrentWorker.ReduceFileNo, CurrentWorker.AllMapWorkers, reducef)
-            time.Sleep(50 * time.Millisecond)   // Used to test reduce running in parallel or not
+            //time.Sleep(50 * time.Millisecond)   // Used to test reduce running in parallel or not
             TellMasterIAmDone(CurrentWorker)
             ///res := TellMasterIAmDone(CurrentWorker)
             ///fmt.Println("Master reply for our Done request, for Reduce  worker ",CurrentWorker.Id,res.Message)
@@ -197,7 +197,6 @@ func GetTask() WorkerDetails{
     na := NoArgs{}
     NewTask := WorkerDetails{}
     call("MasterDetails.AssignNewTask",&na, &NewTask)
-    NewTask.StartTime = time.Now()
     ///fmt.Println("Task is :", NewTask.Task)
     return NewTask
 }
@@ -209,9 +208,6 @@ func CreateInterFiles() bool  {
 
     for i:= 0; i < CurrentWorker.R; i++{
         tFile := fmt.Sprint("mr-inter-" , CurrentWorker.Id , "-" , i ,".tmp")
-
-
-
         nFile,err := os.Create(tFile)
         if err != nil {
             fmt.Println(err)
@@ -229,7 +225,6 @@ func WriteMapTo(reduceNo int,KV KeyValue) bool {
     file, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, os.ModeAppend)
     if err != nil {
         fmt.Println("Error while writinf to map file", err)
-
     }
     enc := json.NewEncoder(file)
     er := enc.Encode(KV)
@@ -244,7 +239,7 @@ func WriteMapTo(reduceNo int,KV KeyValue) bool {
 func GetKvForReduce(listOfMapWorkerFiles []int, reduceFileNo int) []KeyValue {
     kva := []KeyValue{}
     for _, mapworker := range listOfMapWorkerFiles {
-        interFile := fmt.Sprint("mr-inter-", mapworker, "-", reduceFileNo, ".tmp")
+        interFile := fmt.Sprint("mr-inter-", mapworker, "-", reduceFileNo)
         file, err := os.Open(interFile)
         if err != nil {
             fmt.Println("err in GetKvForReduce", err)
@@ -274,10 +269,11 @@ func GetKvForReduce(listOfMapWorkerFiles []int, reduceFileNo int) []KeyValue {
 // returns false if something goes wrong.
 //
 func call(rpcname string, args interface{}, reply interface{}) bool {
-	c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
-	//sockname := masterSock()
-	//c, err := rpc.DialHTTP("unix", sockname)
+	//, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1534")
+	sockname := masterSock()
+	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
+        fmt.Println(err)
 		log.Fatal("dialing:", err)
 	}
 	defer c.Close()

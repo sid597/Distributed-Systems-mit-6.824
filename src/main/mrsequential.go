@@ -29,7 +29,7 @@ func main() {
 	}
 
 	mapf, reducef := loadPlugin(os.Args[1])
-    fmt.Println(mapf, reducef)
+    ///fmt.Println(mapf, reducef)
 	//
 	// read each input file,
 	// pass it to Map,
@@ -45,9 +45,9 @@ func main() {
 		if err != nil {
 			log.Fatalf("cannot read %v", filename)
 		}
-        fmt.Println(content)
+        ///fmt.Println(content)
 		file.Close()
-        fmt.Println(string(content))
+        ///fmt.Println(string(content))
 		kva := mapf(filename, string(content))
 		intermediate = append(intermediate, kva...)
         //fmt.Println(intermediate)

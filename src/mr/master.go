@@ -1,33 +1,39 @@
 package mr
 
 import (
-  //  "fmt"
-    "log"
-    "net/rpc"
-    "net/http"
-    "net"
-  //  "time"
+	//  "fmt"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+	"sync"
+	"time"
 )
-
 
 ////////////////////////////////////////////////
 // Declarations
 ////////////////////////////////////////////////
 
 type MasterDetails struct {
-    CurrentTaskType string
-    MapTaskFiles []string
-    TotalMapTasks int
-    ReduceTaskNumbers []int
-    R int
-    CompletedMapTasks []int
-    //OnGoingMapTasks []
-    WorkerCtr int
+	CurrentTaskType   string
+	MapTaskFiles      []string
+	TotalMapTasks     int
+	ReduceTaskNumbers []int
+	CompletedReduceTaskNumbers []int
+	R                 int
+	CompletedMapTasks []int
+	OngoingTasks      map[int]WorkerDetails
+	WorkerCtr         int
 }
 
-var Master MasterDetails
-var NoNewFile string =  "No New FIle234"
-
+var (
+	Lok          sync.Mutex
+	Master       MasterDetails
+	NoNewFile    string = "No New FIle234"
+	OnGoingTasks map[int]WorkerDetails
+)
 
 ////////////////////////////////////////////////
 // RPC Handlers
@@ -38,51 +44,68 @@ func (m *MasterDetails) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
-
-
 func (m *MasterDetails) AssignNewTask(args *NoArgs, nw *WorkerDetails) error {
-    if len(Master.CompletedMapTasks) != Master.TotalMapTasks {
-        if len(Master.MapTaskFiles) > 0 {
-            nw.Task = "Map"
-            nw.MapFileName, Master.MapTaskFiles = Master.MapTaskFiles[0], Master.MapTaskFiles[1:]
-            nw.Id = Master.WorkerCtr
-            nw.R = Master.R
-            Master.WorkerCtr += 1
-        } else {
-            nw.Task = "Wait"
-            ///fmt.Println(Master.CompletedMapTasks, Master.MapTaskFiles)
-        }
-    } else if len(Master.CompletedMapTasks) == Master.TotalMapTasks {
-        if len(Master.ReduceTaskNumbers) > 0 {
-            nw.Task = "Reduce"
-            nw.ReduceFileNo, Master.ReduceTaskNumbers = Master.ReduceTaskNumbers[0], Master.ReduceTaskNumbers[1:]
-            nw.Id = Master.WorkerCtr
-            nw.R = Master.R
-            Master.WorkerCtr += 1
-            nw.AllMapWorkers = Master.CompletedMapTasks
-        } else {
-            nw.Task = "Done"
-        }
-    }
-    return nil
+	//fmt.Println("Got asked to assign new task",Master.MapTaskFiles)
+	if len(Master.CompletedMapTasks) != Master.TotalMapTasks {
+		if len(Master.MapTaskFiles) > 0 {
+			nw.Task = "Map"
+			nw.MapFileName, Master.MapTaskFiles = Master.MapTaskFiles[0], Master.MapTaskFiles[1:]
+			nw.Id = Master.WorkerCtr
+			nw.R = Master.R
+			nw.StartTime = time.Now()
+			Master.WorkerCtr += 1
+			OnGoingTasks[nw.Id] = *nw
+		} else {
+			nw.Task = "Wait"
+			///fmt.Println(Master.CompletedMapTasks, Master.MapTaskFiles)
+		}
+	} else if len(Master.CompletedMapTasks) == Master.TotalMapTasks {
+		if len(Master.ReduceTaskNumbers) > 0 {
+			nw.Task = "Reduce"
+			nw.ReduceFileNo, Master.ReduceTaskNumbers = Master.ReduceTaskNumbers[0], Master.ReduceTaskNumbers[1:]
+			nw.Id = Master.WorkerCtr
+			nw.R = Master.R
+			nw.StartTime = time.Now()
+			Master.WorkerCtr += 1
+			nw.AllMapWorkers = Master.CompletedMapTasks
+			OnGoingTasks[nw.Id] = *nw
+		} else if len(Master.CompletedReduceTaskNumbers) != Master.R{
+			nw.Task = "Wait"
+		} else {
+			nw.Task = "Done"
+		}
+	}
+	//fmt.Println(OnGoingTasks)
+	return nil
 }
-
 
 func (m *MasterDetails) WorkerDone(w *WorkerDetails, msg *MessageForWorker) error {
-   ///fmt.Println("Worker Done for Worker :",w)
-   if w.Task == "Map"{
-       Master.CompletedMapTasks = append(Master.CompletedMapTasks, w.Id)
-   }
-   ///fmt.Println(Master.CompletedMapTasks)
-   msg.Message  = "Acknowledged"
-    return nil
+
+	// Add the completed task to the respective completed tasks list
+	if w.Task == "Map" {
+		MakePermanent(w)
+		Master.CompletedMapTasks = append(Master.CompletedMapTasks, w.Id)
+
+	} else if w.Task == "Reduce" {
+		Master.CompletedReduceTaskNumbers = append(Master.CompletedReduceTaskNumbers, w.Id)
+	}
+
+	// Remove Ongoing task from Hash because this task is completed
+	_, ok := OnGoingTasks[w.Id]
+	if ok {
+		delete(OnGoingTasks, w.Id)
+	}
+
+	//fmt.Println(OnGoingTasks)
+	///fmt.Println(Master.CompletedMapTasks)
+	msg.Message = "Acknowledged"
+	return nil
 
 }
 
 ////////////////////////////////////////////////
-// Master server 
+// Make New Master server constructor
 ////////////////////////////////////////////////
-
 
 //
 // create a Master.
@@ -91,42 +114,124 @@ func (m *MasterDetails) WorkerDone(w *WorkerDetails, msg *MessageForWorker) erro
 //
 func MakeMaster(files []string, nReduce int) *MasterDetails {
 	Master = MasterDetails{}
-    NewMaster(files, nReduce)
-    ///fmt.Println(Master)
+	NewMaster(files, nReduce)
+	///fmt.Println(Master)
 
-    Master.server()
+	Master.server()
 	return &Master
 }
 
-func NewMaster(files []string, nReduce int) {
-    Master.MapTaskFiles = files
-    // Master.MapTaskFiles = append(Master.MapTaskFiles, NoNewFile)
-    for i := 0; i < nReduce; i++{
-        Master.ReduceTaskNumbers = append(Master.ReduceTaskNumbers, i)
-    }
-    Master.TotalMapTasks = len(files)
-    Master.R = nReduce
-    Master.CurrentTaskType = "Map"
+// Garbage collector removes the unnecessary workers
+func GC() {
+	Lok.Lock()
+	fmt.Println("Called GC")
+	for _, wrkr := range OnGoingTasks {
+		if time.Now().Sub(wrkr.StartTime) > (10 * time.Second) {
+			fmt.Println("_______________________GC START______________________________")
+
+			// Remove the wrkr from OngoingTasks and add their tasks for reassignment in Map or Reduce
+			fmt.Println("Ongoing Tasks are :  ", OnGoingTasks, time.Now().Sub(wrkr.StartTime))
+
+			removedWorker := OnGoingTasks[wrkr.Id]
+			delete(OnGoingTasks, wrkr.Id)
+			fmt.Println("Removed worker is :", removedWorker.Id, removedWorker.Task)
+
+			// OnGoingTasks = append(OnGoingTasks[:indx], OnGoingTasks[indx+1:]...)
+			fmt.Println("Ongoing tasks after removiing dead worker is :", OnGoingTasks)
+			Reassign(removedWorker)
+			fmt.Println("_______________________GC END______________________________")
+
+		}
+	}
+	Lok.Unlock()
+}
+
+// reassign task from the given worker
+func Reassign(wrkr WorkerDetails) {
+	alreadyAssigned := TaskAlreadyAssigned(wrkr)
+	if wrkr.Task == "Map" {
+		if !alreadyAssigned {
+			Master.MapTaskFiles = append(Master.MapTaskFiles, wrkr.MapFileName)
+			fmt.Println("Worker reassigned to Map ", Master.MapTaskFiles)
+		}
+	} else if wrkr.Task == "Reduce" {
+		if !alreadyAssigned {
+			Master.ReduceTaskNumbers = append(Master.ReduceTaskNumbers, wrkr.ReduceFileNo)
+			fmt.Println("Worker reassigned to Reduce ", Master.ReduceTaskNumbers)
+		}
+	}
+}
+
+// Check if filename is in list for task assignment in
+func TaskAlreadyAssigned(wrkr WorkerDetails) bool {
+	if wrkr.Task == "Map" {
+		for _, file := range Master.MapTaskFiles {
+			if wrkr.MapFileName == file {
+				return true
+			}
+
+		}
+		return false
+	} else if wrkr.Task == "Reduce" {
+		for _, TaskNo := range Master.ReduceTaskNumbers {
+			if wrkr.ReduceFileNo == TaskNo {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// Make temporary files permanent
+func MakePermanent(wrkr *WorkerDetails) {
+	if wrkr.Task == "Map" {
+		for i := 0; i < wrkr.R; i++ {
+			renameFrom := fmt.Sprint("mr-inter-", wrkr.Id, "-", i, ".tmp")
+			renameTo := fmt.Sprint("mr-inter-", wrkr.Id, "-", i)
+			err := os.Rename(renameFrom, renameTo)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+
+	}
 
 }
+
+func NewMaster(files []string, nReduce int) {
+	Master.MapTaskFiles = files
+	// Master.MapTaskFiles = append(Master.MapTaskFiles, NoNewFile)
+	for i := 0; i < nReduce; i++ {
+		Master.ReduceTaskNumbers = append(Master.ReduceTaskNumbers, i)
+	}
+	Master.TotalMapTasks = len(files)
+	Master.R = nReduce
+	Master.CurrentTaskType = "Map"
+	OnGoingTasks = make(map[int]WorkerDetails)
+
+}
+
 ////////////////////////////////////////////////
-// Master server 
+// Master server
 ////////////////////////////////////////////////
 
 //
 // start a thread that listens for RPCs from worker.go
 //
 func (m *MasterDetails) server() {
-    rpc.Register(m)
-    rpc.HandleHTTP()
-    l, e := net.Listen("tcp", ":1234")
-//	sockname := masterSock()
-//	os.Remove(sockname)
-//	l, e := net.Listen("unix", sockname)
-    if e != nil {
-        log.Fatal("listen error:", e)
-    }
-    go http.Serve(l, nil)
+	rpc.Register(m)
+	rpc.HandleHTTP()
+	//l, e := net.Listen("tcp", ":1534")
+
+	sockname := masterSock()
+	os.Remove(sockname)
+	l, e := net.Listen("unix", sockname)
+	if e != nil {
+		fmt.Println("listen error :", e)
+		log.Fatal("listen error:", e)
+	}
+	go http.Serve(l, nil)
 }
 
 //
@@ -134,14 +239,23 @@ func (m *MasterDetails) server() {
 // if the entire job has finished.
 //
 func (m *MasterDetails) Done() bool {
-    ret := false
+	ret := false
+	GC()
+	// Your code here.
+	fmt.Println("Completed Reduce tasks are :",Master.CompletedReduceTaskNumbers, len(Master.CompletedReduceTaskNumbers))
+	if len(Master.CompletedMapTasks) == Master.TotalMapTasks && len(Master.CompletedReduceTaskNumbers) == Master.R {
+		fmt.Println("_____________________________________________________")
 
-    // Your code here.
-    if len(Master.CompletedMapTasks) == Master.TotalMapTasks && len(Master.ReduceTaskNumbers) == 0 {
-        ret = true
+		fmt.Println("_____________________________________________________")
 
-    }
+		fmt.Println("_____________________________________________________")
 
-    return ret
+		fmt.Println("_____________________________________________________")
+
+		fmt.Println(Master)
+		ret = true
+
+	}
+
+	return ret
 }
-
