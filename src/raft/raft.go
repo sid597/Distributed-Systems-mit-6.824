@@ -17,9 +17,13 @@ package raft
 //   in the same server.
 //
 
-import "sync"
-import "sync/atomic"
-import "../labrpc"
+import (
+    "sync"
+    "sync/atomic"
+    "../labrpc"
+    "rand"
+    "time"
+)
 
 // import "bytes"
 // import "../labgob"
@@ -43,6 +47,10 @@ type ApplyMsg struct {
 	CommandIndex int
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Structs
+////////////////////////////////////////////////////////////////////////////////
+
 //
 // A Go object implementing a single Raft peer.
 //
@@ -54,11 +62,57 @@ type Raft struct {
 	dead      int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
+
+    ElectionTime int
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
+    // Persistant data
+    CurrentTerm int
+    VotedFor int
+    Log []//TODO
+
+    // Volatile data 
+    CommitIndex int
+    LastApplied int
+
 }
 
+var Candi Candidate
+var Follo Follower
+var Lead Leader
+
+// Leader Specific data 
+type Leader struct{
+
+    // Volatile Leader data
+    NextIndex []int
+    MatchIndex []int
+}
+
+// Candidate Specific data 
+type Candidate struct{
+    CandidateID int
+    LastLogEntry int
+    LastLogTerm int
+}
+
+// Follower Specific data 
+type Follower struct{
+
+}
+////////////////////////////////////////////////////////////////////////////////
+// Constructors for leader, candidate and Follower
+////////////////////////////////////////////////////////////////////////////////
+
+func NewCandidate(){}
+
+func NewFollower(){}
+func NewLeader(){}
+
+////////////////////////////////////////////////////////////////////////////////
+// 
+////////////////////////////////////////////////////////////////////////////////
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
@@ -68,6 +122,8 @@ func (rf *Raft) GetState() (int, bool) {
 	// Your code here (2A).
 	return term, isleader
 }
+
+
 
 //
 // save Raft's persistent state to stable storage,
@@ -110,6 +166,83 @@ func (rf *Raft) readPersist(data []byte) {
 
 
 
+////////////////////////////////////////////////////////////////////////////////
+// start election
+////////////////////////////////////////////////////////////////////////////////
+
+func(rf *Raft) ResetElectionTimer () {
+    rf.mu.Lock
+    defer rf.mu.Unlock
+    // Set election time between 150-300 milliseconds 
+    rf.ElectionTime = (rand.Intn(150) + 150) * time.Millisecond
+    return
+}
+
+// TODO : Need to use condition variables here
+func (rf *Raft) GatherMajority(){
+    // In every 50 millisecond check if majority is gathered by this candidate
+    // And if majority of votes are gathered elect this server as new Leader and
+    // then kill this thread 
+    for {
+        time.Sleep(50 * time.Millisecond)
+        rf.mu.Lock
+        defer rf.mu.Unlock
+        if Candi.Votes >= len(Log)/2 && rf.Role == "Candidate" {
+            rf.Role = "Leader"
+            rf.NewLeader()
+            return
+        }
+    }
+
+}
+
+func (rf *raft) NewElection(){
+    rf.mu.Lock
+    // For New Election we need to do the following things
+    // Increment the current Term
+        rf.CurrentTerm += 1
+    // Vote for self
+        candi.Votes += 1
+    rf.mu.Unlock
+    // Reset election timer
+        rf.ResetElectionTimer()
+    // Send requestVoteRPC to all other servers
+        // Args for RequestVoteRPC
+        Args := RequestVoteArgs{}
+        Args.Term = rf.CurrentTerm
+        Args.CandidateId = Candi.CandidateId
+        Args.LastLogIndex = Candi.LastLogIndex
+        Args.LastLogTerm = Candi.LastLogTerm
+
+        // Reply For RequestVoteRPC
+        Reply := RequestVoteReply{}
+
+        for peer in rf.Peers {
+            if peer != me {
+                // Concurrently ask servers for Votes 
+                go func(peer int){
+                    res := rf.SendRequestVote(peer, Args, &Reply)
+                    // If res is false means server is dead, partitioned, lossy request
+                    if res {
+                        if Reply.VoteGranted {
+                            rf.mu.Lock
+                            Candi.Votes += 1
+                            rf.CurrentTerm = Reply.Term
+                            rf.mu.Unlock
+                        }
+                    }
+                }(peer)
+            }
+        }
+        rf.RequestVote(Args, &Reply)
+
+    // If votes received from majority of servers become Leader
+       go rf.GatherMajority()
+// If AppendEntriesRPC received from new leader convert to follower
+// If election timeout elapses start new election : This is always running and 
+// checking if the timeout is elapsed
+
+}
 
 //
 // example RequestVote RPC arguments structure.
@@ -117,6 +250,10 @@ func (rf *Raft) readPersist(data []byte) {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
+    Term int
+    CandidateId int
+    LastLogIndex int
+    LastLogTerm int
 }
 
 //
@@ -125,13 +262,25 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
+    Term int
+    VoteGranted bool
 }
 
 //
 // example RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
-	// Your code here (2A, 2B).
+    // This is the implementation on the side of server whom we are asking for vote
+    if args.Term < rf.CurrentTerm{
+        reply.VoteGranted =  false
+    } else {
+        selfLastLogIndex := rf.Log[-1].Index
+        selfLastLogTerm := rf.Log[-1].Term
+        if (rf.CurrentTermVotedFor == nil || rf.CurrentTermVotedFor == me) && (args.LastLogIndex >= rf.selfLastLogIndex && args.LastLogTerm, >= self.LastLogTerm) {
+            reply.Term = rf.CurrentTerm
+            reply.VoteGranted = true
+        }
+    }
 }
 
 //
@@ -169,6 +318,9 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 
+////////////////////////////////////////////////////////////////////////////////
+// Server Specific 
+////////////////////////////////////////////////////////////////////////////////
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
