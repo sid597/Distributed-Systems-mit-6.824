@@ -55,7 +55,7 @@ type ApplyMsg struct {
 // A Go object implementing a single Raft peer.
 //
 type Raft struct {
-	mu        sync.Mutex          // Lock to protect shared access to this peer's state
+	mu        sync.Mutex          // Lock() to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
@@ -147,47 +147,74 @@ func (rf *Raft) persist() {
 // restore previously persisted state.
 //
 func (rf *Raft) readPersist(data []byte) {
-	if data == nil || len(data) < 1 { // bootstrap without any state?
-		return
-	}
-	// Your code here (2C).
-	// Example:
-	// r := bytes.NewBuffer(data)
-	// d := labgob.NewDecoder(r)
-	// var xxx
-	// var yyy
-	// if d.Decode(&xxx) != nil ||
-	//    d.Decode(&yyy) != nil {
-	//   error...
-	// } else {
-	//   rf.xxx = xxx
-	//   rf.yyy = yyy
-	// }
-}
-
-
+        if data == nil || len(data) < 1 { // bootstrap without any state?
+            return
+        }
+        // Your code here (2C).
+        // Example:
+        // r := bytes.NewBuffer(data)
+        // d := labgob.NewDecoder(r)
+        // var xxx
+        // var yyy
+        // if d.Decode(&xxx) != nil ||
+        //    d.Decode(&yyy) != nil {
+        //   error...
+        // } else {
+        //   rf.xxx = xxx
+        //   rf.yyy = yyy
+        // }
+    }
 
 ////////////////////////////////////////////////////////////////////////////////
-// start election
+// Glovlly used functions 
 ////////////////////////////////////////////////////////////////////////////////
+
 
 func(rf *Raft) ResetElectionTimer () {
-    rf.mu.Lock
-    defer rf.mu.Unlock
     // Set election time between 150-300 milliseconds 
     rf.ElectionTime = (rand.Intn(150) + 150) * time.Millisecond
     return
 }
 
+func (rf *raft) ElectionTimer() {
+    /*
+      Run election timer in follower and candidate state to check if its time
+      for another election 
+
+      This will be long running thread
+    */
+    for {
+        time.Sleep(10 * time.Millisecond)
+        rf.mu.Lock()
+        if rf.State == "Leader"{
+            return
+        }
+        timeElapsed := Time.Now().Sub(rf.LastRPCTime)
+        if timeElapsed > rf.ElectionTime{
+            if rf.State == "Follower" {
+                rf.State = "Candidate"
+                NewCandidate()
+            } else {
+                NewElection()
+            }
+        }
+        rf.mu.Unlock
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Election Related
+////////////////////////////////////////////////////////////////////////////////
+
+
 
 func (rf *raft) NewElection(){
-    rf.mu.Lock
+    rf.mu.Lock()
     // For New Election we need to do the following things :
     // 1. Increment the current Term
         rf.CurrentTerm += 1
     // 2. Vote for self
         candi.Votes += 1
-    rf.mu.Unlock
     // 3. Reset election timer
         rf.ResetElectionTimer()
     // 4. Send requestVoteRPC to all other servers
@@ -198,25 +225,26 @@ func (rf *raft) NewElection(){
         Args.LastLogIndex = Candi.LastLogIndex
         Args.LastLogTerm = Candi.LastLogTerm
 
+    rf.mu.Unlock()
 
         // Condition variable 
-        cond := sync.NewCond(&mu)
+        cond := sync.NewCond(&rf.mu)
         votesReceived := 0
         finished := 0
 
         // TODO :HOW DO I LOCK THIS READ FROM rf.peers ?
-        for peer in rf.Peers {
+        for _,peer := range rf.Peers {
             if peer != me {
                 // Concurrently ask servers for Votes 
                 go func(peer int){
                     // Reply For RequestVoteRPC
                     Reply := RequestVoteReply{}
-                    response := rf.SendRequestVote(peer, Args, &Reply)
-                    // If response is false means server is dead, partitioned, lossy request
-                    if response {
+                    ok := rf.SendRequestVote(peer, Args, &Reply)
+                    // If ok is false means server is dead, partitioned, lossy request
+                    if ok {
                         if Reply.VoteGranted {
-                            rf.mu.Lock
-                            defer rf.mu.Unlock
+                            rf.mu.Lock()
+                            defer rf.mu.Unlock()
                             VotesReceived += 1
                             /*
                               **Doubt**
@@ -260,7 +288,7 @@ func (rf *raft) NewElection(){
       peers can be changed in a long running system
 
      */
-     rf.mu.Lock
+     rf.mu.Lock()
      for VotesReceived < len(rf.peers)/2 && finished != len(rf.peers){
          cond.Wait
      }
@@ -268,7 +296,7 @@ func (rf *raft) NewElection(){
          rf.State = "Leader"
          NewLeader()
      }
-     rf.mu.Unlock
+     rf.mu.Unlock()
     // 6. If AppendEntriesRPC received from new leader convert to follower
     // 7. If election timeout elapses start new election : This is always running and 
     //    checking if the timeout is elapsed
@@ -280,7 +308,7 @@ func (rf *raft) NewElection(){
 // field names must start with capital letters!
 //
 type RequestVoteArgs struct {
-	// Your data here (2A, 2B).
+    // Your data here (2A, 2B).
     Term int
     CandidateId int
     LastLogIndex int
@@ -292,7 +320,7 @@ type RequestVoteArgs struct {
 // field names must start with capital letters!
 //
 type RequestVoteReply struct {
-	// Your data here (2A).
+    // Your data here (2A).
     Term int
     VoteGranted bool
 }
@@ -302,25 +330,25 @@ type RequestVoteReply struct {
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
     // This is the implementation on the side of server whom we are asking for vote
-    /*
-        Terminology: 
-            Candidate : the server asking for vote
-            Receiver : The server granting vote
-        The rule for granting vote is :
-        1. The term of Candidate should be equal to or greater than 
-           the Receiver.
-        2. If (the Receiver's VotedFor is nil or candidateID) && 
-           (Candidate's log is atleast as up-to-date as receiver's log )
-           then grant vote
+        /*
+            Terminology: 
+                Candidate : the server asking for vote
+                Receiver : The server granting vote
+            The rule for granting vote is :
+            1. The term of Candidate should be equal to or greater than 
+               the Receiver.
+            2. If (the Receiver's VotedFor is nil or candidateID) && 
+               (Candidate's log is atleast as up-to-date as receiver's log )
+               then grant vote
 
-    **Clarification**
-      Assumption : This is a follower server becaise it received a RequestVoteRPC
-      No, This is not a follower it can also be a leader who received a request 
-      for granting its vote and if the Candidate's term > Receiver's term then
+        **Clarification**
+          Assumption : This is a follower server becaise it received a RequestVoteRPC
+          No, This is not a follower it can also be a leader who received a request 
+          for granting its vote and if the Candidate's term > Receiver's term then
       this server will become follower
     */
-    rf.mu.Lock
-    defer rf.mu.Unlock
+    rf.mu.Lock()
+    defer rf.mu.Unlock()
     if args.Term < rf.CurrentTerm{
         reply.VoteGranted =  false
     } else {
@@ -335,7 +363,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
         }
     }
 
+    // This server needs to convert to Follower if it is Leader or Candidate
+    // and the request term is greater than Current Term
     if args.Term > rf.CurrentTerm {
+        rf.CurrentTerm = args.Term
         rf.State = "Follower"
         NewFollower()
 
@@ -376,6 +407,10 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
+
+////////////////////////////////////////////////////////////////////////////////
+// AppendEntriesRPC
+////////////////////////////////////////////////////////////////////////////////
 
 ////////////////////////////////////////////////////////////////////////////////
 // Server Specific 
