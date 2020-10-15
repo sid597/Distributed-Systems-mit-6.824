@@ -64,6 +64,7 @@ type Raft struct {
 	// Your data here (2A, 2B, 2C).
 
     ElectionTime int
+    State string
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
@@ -178,35 +179,18 @@ func(rf *Raft) ResetElectionTimer () {
     return
 }
 
-// TODO : Need to use condition variables here
-func (rf *Raft) GatherMajority(){
-    // In every 50 millisecond check if majority is gathered by this candidate
-    // And if majority of votes are gathered elect this server as new Leader and
-    // then kill this thread 
-    for {
-        time.Sleep(50 * time.Millisecond)
-        rf.mu.Lock
-        defer rf.mu.Unlock
-        if Candi.Votes >= len(Log)/2 && rf.Role == "Candidate" {
-            rf.Role = "Leader"
-            rf.NewLeader()
-            return
-        }
-    }
-
-}
 
 func (rf *raft) NewElection(){
     rf.mu.Lock
-    // For New Election we need to do the following things
-    // Increment the current Term
+    // For New Election we need to do the following things :
+    // 1. Increment the current Term
         rf.CurrentTerm += 1
-    // Vote for self
+    // 2. Vote for self
         candi.Votes += 1
     rf.mu.Unlock
-    // Reset election timer
+    // 3. Reset election timer
         rf.ResetElectionTimer()
-    // Send requestVoteRPC to all other servers
+    // 4. Send requestVoteRPC to all other servers
         // Args for RequestVoteRPC
         Args := RequestVoteArgs{}
         Args.Term = rf.CurrentTerm
@@ -214,38 +198,85 @@ func (rf *raft) NewElection(){
         Args.LastLogIndex = Candi.LastLogIndex
         Args.LastLogTerm = Candi.LastLogTerm
 
-        // Reply For RequestVoteRPC
-        Reply := RequestVoteReply{}
 
+        // Condition variable 
+        cond := sync.NewCond(&mu)
+        votesReceived := 0
+        finished := 0
+
+        // TODO :HOW DO I LOCK THIS READ FROM rf.peers ?
         for peer in rf.Peers {
             if peer != me {
                 // Concurrently ask servers for Votes 
                 go func(peer int){
-                    res := rf.SendRequestVote(peer, Args, &Reply)
-                    // If res is false means server is dead, partitioned, lossy request
-                    if res {
+                    // Reply For RequestVoteRPC
+                    Reply := RequestVoteReply{}
+                    response := rf.SendRequestVote(peer, Args, &Reply)
+                    // If response is false means server is dead, partitioned, lossy request
+                    if response {
                         if Reply.VoteGranted {
                             rf.mu.Lock
-                            Candi.Votes += 1
+                            defer rf.mu.Unlock
+                            VotesReceived += 1
+                            /*
+                              **Doubt**
+                               Can a Receiver reply with a term greater than Candidate's term ?
+
+                               So the rule is if  a receiver sees a term < Receiver's Term
+                               it will return false. Otherwise return term and VoteGranted=true
+                               NO a candidate cannot receive a term > Cndidate's term 
+                               A candidate can only become follower in case it gets a 
+                               appendVoteRPC
+                            */
                             rf.CurrentTerm = Reply.Term
-                            rf.mu.Unlock
                         }
+                        finished += 1
+                        cond.Broadcast()
                     }
                 }(peer)
             }
         }
         rf.RequestVote(Args, &Reply)
 
-    // If votes received from majority of servers become Leader
-       go rf.GatherMajority()
-// If AppendEntriesRPC received from new leader convert to follower
-// If election timeout elapses start new election : This is always running and 
-// checking if the timeout is elapsed
+    // 5. If votes received from majority of server's become Leader
 
+    /* 
+        This server will remain in this state until one the following 3 things happen
+          1. If votes received from majority of servers, become Leader
+          2. Someone else establishes themselves as leader
+          3. Election timeout happens
+
+       **QUESTION**
+       QUESTION : Do I need to use another thread to chek if this server gained majority or not ?
+       I THINK : Yes, I can for that I would have save another state in Candidate struct for remembring 
+       the no of votes gathered and total how many replies I have got
+       No. Nothing is gained from using another go thread, nothing will be parallized by
+       doing this
+    
+       **DOUBT**
+      I suspect I do not need to lock this for loop because the value 
+      of rf.peers will not be changed by any thread 
+      On further thought this might be a wrong assumption because 
+      peers can be changed in a long running system
+
+     */
+     rf.mu.Lock
+     for VotesReceived < len(rf.peers)/2 && finished != len(rf.peers){
+         cond.Wait
+     }
+     if VotesReceived >= len(rf.peers)/2 {
+         rf.State = "Leader"
+         NewLeader()
+     }
+     rf.mu.Unlock
+    // 6. If AppendEntriesRPC received from new leader convert to follower
+    // 7. If election timeout elapses start new election : This is always running and 
+    //    checking if the timeout is elapsed
+    // NOTE: 6 and 7 are taken care of by threads running concurrently
 }
 
 //
-// example RequestVote RPC arguments structure.
+// RequestVote RPC arguments structure.
 // field names must start with capital letters!
 //
 type RequestVoteArgs struct {
@@ -257,7 +288,7 @@ type RequestVoteArgs struct {
 }
 
 //
-// example RequestVote RPC reply structure.
+// RequestVote RPC reply structure.
 // field names must start with capital letters!
 //
 type RequestVoteReply struct {
@@ -267,19 +298,47 @@ type RequestVoteReply struct {
 }
 
 //
-// example RequestVote RPC handler.
+// RequestVote RPC handler.
 //
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
     // This is the implementation on the side of server whom we are asking for vote
+    /*
+        Terminology: 
+            Candidate : the server asking for vote
+            Receiver : The server granting vote
+        The rule for granting vote is :
+        1. The term of Candidate should be equal to or greater than 
+           the Receiver.
+        2. If (the Receiver's VotedFor is nil or candidateID) && 
+           (Candidate's log is atleast as up-to-date as receiver's log )
+           then grant vote
+
+    **Clarification**
+      Assumption : This is a follower server becaise it received a RequestVoteRPC
+      No, This is not a follower it can also be a leader who received a request 
+      for granting its vote and if the Candidate's term > Receiver's term then
+      this server will become follower
+    */
+    rf.mu.Lock
+    defer rf.mu.Unlock
     if args.Term < rf.CurrentTerm{
         reply.VoteGranted =  false
     } else {
         selfLastLogIndex := rf.Log[-1].Index
         selfLastLogTerm := rf.Log[-1].Term
-        if (rf.CurrentTermVotedFor == nil || rf.CurrentTermVotedFor == me) && (args.LastLogIndex >= rf.selfLastLogIndex && args.LastLogTerm, >= self.LastLogTerm) {
+        candidateId := args.CandidateId
+        if (rf.CurrentTermVotedFor == nil || rf.CurrentTermVotedFor == candidateId ) && (args.LastLogIndex >= rf.selfLastLogIndex && args.LastLogTerm, >= self.LastLogTerm) {
             reply.Term = rf.CurrentTerm
             reply.VoteGranted = true
+        } else {
+            reply.VoteGranted = false
         }
+    }
+
+    if args.Term > rf.CurrentTerm {
+        rf.State = "Follower"
+        NewFollower()
+
     }
 }
 
