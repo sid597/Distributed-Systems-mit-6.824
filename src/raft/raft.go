@@ -18,7 +18,7 @@ package raft
 //
 
 import (
-	"fmt"
+//	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -89,11 +89,10 @@ type Raft struct {
 	dead      int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
-
-	ElectionTime        time.Duration
+    TotalPeers int
+	ElectionAlarm        time.Duration
 	State               string
 	LastRPCTime         time.Time
-	CurrentTermVotedFor int
 	// Look at the paper's Figure 2 for a description of what
 	// state a Raft server must maintain.
 
@@ -127,7 +126,7 @@ type Leader struct {
 
 // Candidate Specific data
 type Candidate struct {
-	CandidateID  int
+	CandidateId  int
 	LastLogIndex int
 	LastLogTerm  int
 	Votes        int
@@ -143,30 +142,66 @@ type Follower struct {
 
 func (rf *Raft) NewCandidate() {
 	rf.mu.Lock()
+
+    lastLogIndex := len(rf.Log) - 1
 	rf.State = "Candidate"
-	Candi.CandidateID = rf.me
-	Candi.LastLogIndex = len(rf.Log)
-	Candi.LastLogTerm = rf.Log[len(rf.Log)-1]
+	Candi.CandidateId = rf.me
+	Candi.LastLogIndex = lastLogIndex
+	Candi.LastLogTerm = rf.Log[lastLogIndex]
 	Candi.Votes = 0
+    Pf("[%v] Became a new candidate", rf.me)
+
 	rf.mu.Unlock()
 
 	rf.NewElection()
-
 }
 
 func (rf *Raft) NewFollower() {
-	Follo = Follower{}
+    Follo = Follower{}
 	rf.mu.Lock()
 	rf.State = "Follower"
-	Pf("[%v] Starting election timer", rf.me)
+
+	Pf("[%v] Became a Follower", rf.me)
+	Pf("[%v] Starting election Alarm countdown", rf.me)
 	rf.mu.Unlock()
 
-	rf.StartElectionTimer()
+	rf.StartElectionCountdown()
 }
 
 func (rf *Raft) NewLeader() {
 	Pf("*********************************************")
+    rf.ResetElectionAlarm()
+
+    rf.mu.Lock()
 	Lead = Leader{}
+    rf.State = "Leader"
+    rf.mu.Unlock()
+
+    for {
+        rf.mu.Lock()
+        me := rf.me
+        args := AppendEntriesArgs{}
+        rf.mu.Unlock()
+
+        time.Sleep(40 * time.Millisecond)
+
+        for peer,_ := range rf.peers{
+            if peer != rf.me{
+                go func(peer int) {
+                    reply := AppendEntriesReply{}
+                    Pf("[%v] sending Append Entry RPC to [%v]", me, peer)
+                    ok := rf.sendAppendEntries(peer, &args, &reply)
+                    Pf("[%v] result from [%v] is %v", me,peer, ok)
+             }(peer)
+            }
+
+        }
+
+
+
+
+    }
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -231,15 +266,15 @@ func (rf *Raft) readPersist(data []byte) {
 // Glovlly used functions
 ////////////////////////////////////////////////////////////////////////////////
 
-func (rf *Raft) ResetElectionTimer() {
+func (rf *Raft) ResetElectionAlarm() {
 	// Set election time between 150-300 milliseconds
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	rf.ElectionTime = time.Duration(rand.Intn(150)+150) * time.Millisecond
-	Pf("[%v] Election timer reset to : %v", rf.me, rf.ElectionTime)
+	rf.ElectionAlarm = time.Duration(rand.Intn(150)+150) * time.Millisecond
+	Pf("[%v] Election timer reset to : %v", rf.me, rf.ElectionAlarm)
 }
 
-func (rf *Raft) StartElectionTimer() {
+func (rf *Raft) StartElectionCountdown() {
 	/*
 	   Run election timer in follower and candidate state to check if its time
 	   for another election
@@ -251,23 +286,23 @@ func (rf *Raft) StartElectionTimer() {
 		// Get details of data needed in this loop
 		rf.mu.Lock()
 		state := rf.State
-		lastRPC := rf.LastRPCTime
-		electionTime := rf.ElectionTime
+		lastRpcTime := rf.LastRPCTime
+		electionTime := rf.ElectionAlarm
 		me := rf.me
 		rf.mu.Unlock()
+
 		if state == "Leader" {
-			return
+            Pf("[%v] LEADER ----------", me)
+            rf.mu.Lock()
+            rf.ElectionAlarm = 20000 * time.Hour
+            rf.mu.Unlock()
+            return 
 		}
-		timeElapsed := time.Now().Sub(lastRPC)
+		timeElapsed := time.Now().Sub(lastRpcTime)
 		if timeElapsed > electionTime {
 			Pf("[%v] Election elapsed by [%v] was expected [%v] ", me, timeElapsed, electionTime)
+            rf.NewCandidate()
 
-			if state == "Follower" {
-				Pf("[%v] Current state is of FOLLOWER converting to CANDIDATE", me)
-				rf.NewCandidate()
-			} else {
-				rf.NewElection()
-			}
 		}
 	}
 }
@@ -276,6 +311,27 @@ func (rf *Raft) StartElectionTimer() {
 // Election Related
 ////////////////////////////////////////////////////////////////////////////////
 
+//
+// RequestVote RPC arguments structure.
+// field names must start with capital letters!
+//
+type RequestVoteArgs struct {
+	// Your data here (2A, 2B).
+	Term         int
+	CandidateId  int
+	LastLogIndex int
+	LastLogTerm  int
+}
+
+//
+// RequestVote RPC reply structure.
+// field names must start with capital letters!
+//
+type RequestVoteReply struct {
+	// Your data here (2A).
+	Term        int
+	VoteGranted bool
+}
 func (rf *Raft) NewElection() {
 	rf.mu.Lock()
 	Pf("[%v] NEW ELECTION", rf.me)
@@ -284,65 +340,53 @@ func (rf *Raft) NewElection() {
 	rf.CurrentTerm += 1
 	// 2. Vote for self
 	Candi.Votes += 1
-	rf.CurrentTermVotedFor = rf.me
+	rf.VotedFor = rf.me
 	// 3. Reset election timer
-	rf.ElectionTime = time.Duration(rand.Intn(150)+150) * time.Millisecond
-	Pf("[%v] Election timer reset to : %v", rf.me, rf.ElectionTime)
+	rf.ElectionAlarm = time.Duration(rand.Intn(150)+150) * time.Millisecond
+	Pf("[%v] Election timer reset to : %v", rf.me, rf.ElectionAlarm)
 	// 4. Send requestVoteRPC to all other servers
 	// Args for RequestVoteRPC
 	Pf("[%v] Term : %v", rf.me, rf.CurrentTerm)
 	Args := RequestVoteArgs{}
 	Args.Term = rf.CurrentTerm
-	Args.CandidateId = Candi.CandidateID
+	Args.CandidateId = Candi.CandidateId
 	Args.LastLogIndex = Candi.LastLogIndex
 	Args.LastLogTerm = Candi.LastLogTerm
+
+
+	me := rf.me
+	currentTerm := rf.CurrentTerm
 
 	rf.mu.Unlock()
 
 	// Condition variable
-	cond := sync.NewCond(&rf.mu)
+	//cond := sync.NewCond(&rf.mu)
 	votesReceived := 0
 	finished := 0
 
 	// TODO :HOW DO I LOCK THIS READ FROM rf.peers ?
 	// This peers list can change if some new peer is added or removed while
 	// maintaining but I guess this will not be a provlem for this lab
-	rf.mu.Lock()
-	me := rf.me
-	currentTerm := rf.CurrentTerm
-	rf.mu.Unlock()
 	for peer, _ := range rf.peers {
 		Pf("[%v] %v", me, peer)
 		if peer != me {
 			// Concurrently ask servers for Votes
 			go func(peer int) {
-				Pf("[%v] Asking for Vote from  : [%v] for TERM [%v]", me, peer, currentTerm)
-				// Reply For RequestVoteRPC
-				Reply := RequestVoteReply{}
-				ok := rf.sendRequestVote(peer, &Args, &Reply)
-				// If ok is false means server is dead, partitioned, lossy request
-				if ok {
-					rf.mu.Lock()
-					if Reply.VoteGranted {
-						Pf("[%v] Vote received from  : %v", me, peer)
-						votesReceived += 1
-						/*
-						   **Doubt**
-						    Can a Receiver reply with a term greater than Candidate's term ?
+                Pf("[%v] Requested Vote from [%v] with term [%v]", me, peer, currentTerm)
+                reply := RequestVoteReply{}
+                ok := rf.sendRequestVote(peer, &Args, &reply)
 
-						    So the rule is if  a receiver sees a term < Receiver's Term
-						    it will return false. Otherwise return term and VoteGranted=true
-						    NO a candidate cannot receive a term > Cndidate's term
-						    A candidate can only become follower in case it gets a
-						    appendVoteRPC
-						*/
-						//rf.CurrentTerm = Reply.Term
-					}
-					finished += 1
-					rf.mu.Unlock()
-					Pf("[%v] BROADCASTING", me)
-					cond.Broadcast()
-				}
+                Pf("[%v] Result from [%v] : [%v]", me, peer, ok)
+                if ok {
+                    rf.mu.Lock()
+                    if reply.VoteGranted {
+                        votesReceived += 1
+                        Pf("[%v] Received Votes from [%v] now total votes [%v]", me, peer, votesReceived)
+                    }
+                    finished += 1
+                    rf.mu.Unlock()
+                }
+                //cond.Broadcast()
 			}(peer)
 		}
 	}
@@ -369,44 +413,34 @@ func (rf *Raft) NewElection() {
 	   peers can be changed in a long running system
 
 	*/
-	Pf("[%v] Start counting Voutes", me)
-	rf.mu.Lock()
-	for votesReceived < len(rf.peers)/2 && finished != len(rf.peers) {
-		Pf("[%v] Another task finished, total : %v ", me, finished)
-		cond.Wait()
-	}
-	Pf("[%v] VOTES RECEIVED : %v, Majority Voted %v", me, votesReceived, finished)
-	if votesReceived > len(rf.peers)/2 {
-		rf.NewLeader()
-	}
-	rf.mu.Unlock()
+    go func() {
+       Pf("[%v] Start counting Votes", me)
+       for{
+        //for votesReceived < rf.TotalPeers/2 && finished != rf.TotalPeers - 1 {
+            time.Sleep(10 * time.Millisecond)
+        rf.mu.Lock()
+            Pf("[%v] Votes received are : [%v]", me,votesReceived)
+            Pf("[%v] Finished : [%v], out of : [%v] ", me, finished, rf.TotalPeers)
+            vr := votesReceived
+            maj := rf.TotalPeers/2
+        rf.mu.Unlock()
+        //	cond.Wait()
+        //}
+        //Pf("[%v] VOTES RECEIVED : %v, Majority Voted %v", me, votesReceived, finished)
+           if vr > maj{
+                    Pf("[%v] ____________________ BECAME LEADER ___________________", me)
+                rf.NewLeader()
+                break
+            }
+        //	rf.NewLeader()
+        }
+    }()
 	// 6. If AppendEntriesRPC received from new leader convert to follower
 	// 7. If election timeout elapses start new election : This is always running and
 	//    checking if the timeout is elapsed
 	// NOTE: 6 and 7 are taken care of by threads running concurrently
 }
 
-//
-// RequestVote RPC arguments structure.
-// field names must start with capital letters!
-//
-type RequestVoteArgs struct {
-	// Your data here (2A, 2B).
-	Term         int
-	CandidateId  int
-	LastLogIndex int
-	LastLogTerm  int
-}
-
-//
-// RequestVote RPC reply structure.
-// field names must start with capital letters!
-//
-type RequestVoteReply struct {
-	// Your data here (2A).
-	Term        int
-	VoteGranted bool
-}
 
 //
 // RequestVote RPC handler.
@@ -430,63 +464,73 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	       for granting its vote and if the Candidate's term > Receiver's term then
 	   this server will become follower
 	*/
+    rf.ResetElectionAlarm()
 
 	rf.mu.Lock()
+    rf.LastRPCTime = time.Now()
+    // Reset Election timer
+	Pf("[%v] Vote requested by [%v] for TERM [%v] ", rf.me, args.CandidateId, args.Term)
+    reply.Term = args.Term
+    reply.VoteGranted = true
 
-	currentTerm := rf.CurrentTerm
-	me := rf.me
-	log := rf.Log
-	state := rf.State
-	selfLastLogIndex := len(rf.Log)
-	selfLastLogTerm := rf.Log[len(rf.Log)-1]
-	candidateId := args.CandidateId
-	currentTermVotedFor := rf.CurrentTermVotedFor
-	//logLen := len(rf.Log)
-	peerLen := len(rf.peers)
-	rTerm := args.Term
-	rId := args.CandidateId
-	rLastLogIndex := args.LastLogIndex
-	rLastLogTerm := args.LastLogTerm
-	rf.LastRPCTime = time.Now()
+    Pf("[%v] VotedFor [%v] for TERM [%v] ", rf.me, args.CandidateId, args.Term)
 
-	rf.mu.Unlock()
-	Pf("=========== %v ========VOTE REQUESTED=== FROM : %v============================", rId, me)
-	Pf("[%v] Vote requested by [%v] for TERM [%v] ", me, candidateId, rTerm)
+    rf.mu.Unlock()
 
-	if rTerm < currentTerm {
-		Pf("[%v] Receivers [%v] Term is less than Candidates [%v]  for TERM [%v] ", me, candidateId, me, rTerm)
-		reply.VoteGranted = false
-	} else {
-		Pf("[%v] This Candidate's log is : %v", me, log)
+	//currentTerm := rf.CurrentTerm
+	//me := rf.me
+	//log := rf.Log
+	//state := rf.State
+	//selfLastLogIndex := len(rf.Log)
+	//selfLastLogTerm := rf.Log[len(rf.Log)-1]
+	//candidateId := args.CandidateId
+	//currentTermVotedFor := rf.VotedFor
+	////logLen := len(rf.Log)
+	//peerLen := rf.TotalPeers
+	//rTerm := args.Term
+	//rId := args.CandidateId
+	//rLastLogIndex := args.LastLogIndex
+	//rLastLogTerm := args.LastLogTerm
+	//rf.LastRPCTime = time.Now()
 
-		Pf("[%v] CurrentTermVotedFor is [%v] for TERM [%v] ", me, currentTermVotedFor, rTerm)
+	//rf.mu.Unlock()
+	//Pf("=========== %v ========VOTE REQUESTED=== FROM : %v============================", rId, me)
+	//Pf("[%v] Vote requested by [%v] for TERM [%v] ", me, candidateId, rTerm)
 
-		rf.mu.Lock()
-		if (currentTermVotedFor == peerLen+1 || currentTermVotedFor == candidateId) && (rLastLogIndex >= selfLastLogIndex && rLastLogTerm >= selfLastLogTerm) {
-			reply.Term = rf.CurrentTerm
-			reply.VoteGranted = true
-			rf.CurrentTermVotedFor = rId
-		} else {
-			reply.VoteGranted = false
-		}
-		rf.mu.Unlock()
+	//if rTerm < currentTerm {
+	//	Pf("[%v] Receivers [%v] Term is less than Candidates [%v]  for TERM [%v] ", me, candidateId, me, rTerm)
+	//	reply.VoteGranted = false
+	//} else {
+	//	Pf("[%v] This Candidate's log is : %v", me, log)
 
-		Pf("[%v] Reply to [%v] is %v for TERM [%v] ", me, rId, reply, rTerm)
-	}
+	//	Pf("[%v] VotedFor is [%v] for TERM [%v] ", me, currentTermVotedFor, rTerm)
 
-	Pf("-------- %v ---------VOTE PROCESSED----- FROM : %v --------------------", rId, me)
-	// This server needs to convert to Follower if it is Leader or Candidate
-	// and the request term is greater than Current Term
-	if rTerm > currentTerm {
-		rf.mu.Lock()
-		rf.CurrentTerm = rTerm
-		rf.mu.Unlock()
+	//	rf.mu.Lock()
+	//	if (currentTermVotedFor == peerLen+1 || currentTermVotedFor == candidateId) && (rLastLogIndex >= selfLastLogIndex && rLastLogTerm >= selfLastLogTerm) {
+	//		reply.Term = rf.CurrentTerm
+	//		reply.VoteGranted = true
+	//		rf.VotedFor = rId
+	//	} else {
+	//		reply.VoteGranted = false
+	//	}
+	//	rf.mu.Unlock()
 
-		if state != "Follower" {
-			rf.NewFollower()
-		}
+	//	Pf("[%v] Reply to [%v] is %v for TERM [%v] ", me, rId, reply, rTerm)
+	//}
 
-	}
+	//Pf("-------- %v ---------VOTE PROCESSED----- FROM : %v --------------------", rId, me)
+	//// This server needs to convert to Follower if it is Leader or Candidate
+	//// and the request term is greater than Current Term
+	//if rTerm > currentTerm {
+	//	rf.mu.Lock()
+	//	rf.CurrentTerm = rTerm
+	//	rf.mu.Unlock()
+
+	//	if state != "Follower" {
+	//		rf.NewFollower()
+	//	}
+
+	//}
 }
 
 //
@@ -551,7 +595,7 @@ type AppendEntriesReply struct {
 // A false return can be caused by a dead server, a live server that
 // can't be reached, a lost request, or a lost reply.
 
-func (rf *Raft) sendAppendEntriesRPC(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
@@ -561,6 +605,7 @@ func (rf *Raft) sendAppendEntriesRPC(server int, args *AppendEntriesArgs, reply 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	/*
 	   Receiver IMplementation
+       0. Reset election  timer
 	   1. If term > CurrentTerm, reply false
 	   2. If log doesn't contain an entry at prevLogIndex whose term matches prevLogTerm return false
 	   3. If an existing entry conflicts with a new one (same Indec but different terms), delete
@@ -569,12 +614,16 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	   5. If leaderCommit > commitIndex, set commitIndex = min (leaderCommit, index of last new entry)
 
 	*/
-	if args.Term < rf.CurrentTerm {
-		reply.Success = false
-	} else {
-		reply.Term = rf.CurrentTerm
-		reply.Success = true
-	}
+    rf.ResetElectionAlarm()
+    rf.mu.Lock()
+    rf.LastRPCTime = time.Now()
+    rf.mu.Unlock()
+//  	if args.Term < rf.CurrentTerm {
+//  		reply.Success = false
+//  	} else {
+//  		reply.Term = rf.CurrentTerm
+//  		reply.Success = true
+//  	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -642,16 +691,20 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-	rf.CurrentTerm = 0
-	rf.CurrentTermVotedFor = len(peers) + 1
-	rf.Log = append(rf.Log, rf.CurrentTerm)
-	// Your initialization code here (2A, 2B, 2C).
-	rf.LastRPCTime = time.Now()
-	Pf("%v",len(peers)/2)
+    rf.TotalPeers = len(peers)
 
-	//Set a randomised timer
-	rf.ResetElectionTimer()
-	fmt.Println(rf)
+    // Server state needed for election 
+	rf.CurrentTerm = 1
+	rf.VotedFor = rf.TotalPeers + 1
+    rf.Log = []int{0}
+    rf.CommitIndex = 0
+	rf.ElectionAlarm = time.Duration(rand.Intn(150)+150) * time.Millisecond
+	rf.LastRPCTime = time.Now()
+
+    Pf("[%v] Election Alarm set to %v", rf.me, rf.ElectionAlarm)
+
+	// Your initialization code here (2A, 2B, 2C).
+
 	go rf.NewFollower()
 
 	// initialize from state persisted before a crash
