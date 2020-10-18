@@ -1,3 +1,4 @@
+//Pf("[%v] ", rf.me)
 package raft
 
 //
@@ -81,25 +82,32 @@ const (
 func (rf *Raft)BecomeFollower(){
 
     rf.mu.Lock()
+    Pf("[%v] Asked to become Follower for term [%v] ", rf.me, rf.currentTerm)
     rf.state = Follower
-    rf.ResetElectionAlarm()
     rf.mu.Unlock()
+    rf.ResetElectionAlarm()
+    rf.StartElectionCountdown()
 }
 
 func (rf *Raft)BecomeLeader(){
 
     rf.mu.Lock()
+    Pf("[%v] Asked to become Leader for term [%v] ", rf.me, rf.currentTerm)
     rf.state = Leader
     rf.mu.Unlock()
 
     // TODO : Start sending heartbeats
+    rf.Heartbeat()
 }
 
 func (rf *Raft)BecomeCandidate(){
 
     rf.mu.Lock()
+
+    Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
     rf.state = Candidate
     rf.mu.Unlock()
+    rf.NewElection()
 }
 
 //
@@ -134,18 +142,42 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.lastReceived = time.Now()
 
     rf.mu.Lock()
-    if args.Term > rf.currentTerm {
-        rf.currentTerm = args.Term
-        rf.BecomeFollower()
-    }
+
+    //isFollower := (rf.state == Follower)
+    currentTerm := rf.currentTerm
+
+    Pf("[%v] REQUEST RPC _______START ", rf.me)
+    Pf("[%v] Vote requested by [%v] for term [%v] ", rf.me,args.CandidateId, rf.currentTerm)
+    Pf("[%v] args Term [%v] current Term [%v]  ", rf.me,args.Term, rf.currentTerm)
+    Pf("[%v] Voted For [%v] ", rf.me, rf.votedFor)
+
+
     if args.Term < rf.currentTerm {
+    //Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
         reply.Term = rf.currentTerm
         reply.VoteGranted = false
     } else if rf.votedFor == rf.totalServers + 1 || rf.votedFor == args.CandidateId {
+    //Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
         reply.Term = rf.currentTerm
         reply.VoteGranted = true
+        rf.votedFor = args.CandidateId
     }
+
+    Pf("[%v] reply to [%v]  is : %v", rf.me, args.CandidateId, reply)
+    Pf("[%v] REQUEST RPC _______END ", rf.me)
     rf.mu.Unlock()
+
+    if args.Term > currentTerm {
+        rf.mu.Lock()
+        rf.currentTerm = args.Term
+        rf.mu.Unlock()
+    }
+
+    //if args.Term > rf.currentTerm {
+    //    Pf("[%v] Term of [%v] is greater [%v] than Receiver Term [%v] ", rf.me,args.CandidateId,args.Term, rf.currentTerm)
+    //    rf.currentTerm = args.Term
+    //    rf.BecomeFollower()
+    //}
 }
 
 //
@@ -211,11 +243,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// Your code here (2A, 2B).
 
 	rf.ResetElectionAlarm()
+    rf.mu.Lock()
 	rf.lastReceived = time.Now()
+    rf.mu.Unlock()
 	rf.BecomeFollower()
 
     rf.mu.Lock()
+    //Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
     if args.Term > rf.currentTerm {
+    //Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
         rf.currentTerm = args.Term
     }
     reply.Term = rf.currentTerm
@@ -266,34 +302,47 @@ func (rf *Raft) NewElection(){
 
     rf.mu.Lock()
 
+    Pf("[%v] New election for term [%v] ", rf.me, rf.currentTerm)
     rf.currentTerm += 1
     rf.votedFor = rf.me
-    rf.ResetElectionAlarm()
     me := rf.me
 
     rf.mu.Unlock()
 
+    rf.ResetElectionAlarm()
     totalVotes := 1 // Voted for self
 
     for server,_ := range rf.peers {
         if server != me {
             go func(server int) {
                 voteGranted, serverTerm :=  rf.GetVote(server)
-                if voteGranted {
+                rf.mu.Lock()
+                currentTerm := rf.currentTerm
 
+                rf.mu.Unlock()
+                if voteGranted {
                     rf.mu.Lock()
+
                     totalVotes += 1
-                    if totalVotes > rf.totalServers / 2 + 1 {
+                    majorityServers := rf.totalServers / 2 + 1
+                    tv := totalVotes
+                    Pf("[%v] vote from [%v] result [%v] now Total Votes [%v] out of [%v] for Term : [%v]",rf.me, server, voteGranted, totalVotes,majorityServers, rf.currentTerm)
+
+                    rf.mu.Unlock()
+
+                    if tv > majorityServers {
+                       Pf("[%v] total votes received > majority ", rf.me)
                        rf.BecomeLeader()
-                       rf.mu.Unlock()
                        return
                     }
 
                 } else {
-                    rf.mu.Lock()
-                    if serverTerm > rf.currentTerm {
+                    if serverTerm > currentTerm {
+                        //Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
+                        rf.mu.Lock()
                         rf.currentTerm = serverTerm
                         rf.mu.Unlock()
+
                         rf.BecomeFollower()
                         return
                     }
@@ -306,26 +355,31 @@ func (rf *Raft) NewElection(){
 func (rf *Raft) GetVote(server int) (bool, int){
 
     rf.mu.Lock()
+
+    Pf("[%v] Get vote from [%v] for term [%v] ", rf.me,server, rf.currentTerm)
     args := RequestVoteArgs{}
     args.Term = rf.currentTerm
     args.CandidateId = rf.me
-
     reply := RequestVoteReply{}
-    rf.mu.Unlock()
 
-    for {
-        time.Sleep(10 * time.Millisecond)
-        ok := rf.sendRequestVote(server, &args, &reply)
-        if ok {
-            return reply.VoteGranted, reply.Term
-        }
+    //me := rf.me
+    //currentTerm := rf.currentTerm
+
+    rf.mu.Unlock()
+    var ok bool
+    ok = rf.sendRequestVote(server, &args, &reply)
+    for !ok {
+        time.Sleep(5 * time.Millisecond)
+        ok = rf.sendRequestVote(server, &args, &reply)
     }
+    return reply.VoteGranted, reply.Term
 }
 
 
 func (rf *Raft) Heartbeat() {
 
     rf.mu.Lock()
+    //Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
     me := rf.me
     rf.mu.Unlock()
 
@@ -337,6 +391,7 @@ func (rf *Raft) Heartbeat() {
                     term, success := rf.SendHeartbeat(server)
                     if !success {
                         rf.mu.Lock()
+    //Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
                         rf.currentTerm = term
                         rf.mu.Unlock()
                         rf.BecomeFollower()
@@ -350,6 +405,7 @@ func (rf *Raft) Heartbeat() {
 func (rf *Raft) SendHeartbeat(server int)(int, bool){
 
     rf.mu.Lock()
+    //Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
     args := AppendEntriesArgs{}
     args.Term = rf.currentTerm
     args.LeaderId = rf.me
@@ -374,8 +430,10 @@ func (rf *Raft) SendHeartbeat(server int)(int, bool){
 // Set election time between 150-300 milliseconds
 //
 func (rf *Raft) ResetElectionAlarm() {
+    rf.mu.Lock()
+    defer rf.mu.Unlock()
 	rf.electionAlarm = time.Duration(rand.Intn(150)+150) * time.Millisecond
-	Pf("[%v] Election timer reset to : %v", rf.me, rf.electionAlarm)
+	Pf("[%v] Election alarm reset to : [%v] for term [%v]", rf.me, rf.electionAlarm, rf.currentTerm)
 }
 
 /*
@@ -388,22 +446,24 @@ func (rf *Raft) ResetElectionAlarm() {
 func (rf *Raft) StartElectionCountdown() {
 
 	for {
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 
 		rf.mu.Lock()
+    //Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
 		state := rf.state
 		lastRpcTime := rf.lastReceived
-		electionTime := rf.electionAlarm
+		electionAlarm := rf.electionAlarm
 		me := rf.me
 		rf.mu.Unlock()
 
 		if state == Leader {
+    //Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
 			// TODO Somehow stop this thread / set election alarm infinite
 			return
 		} else {
 			timeElapsed := time.Now().Sub(lastRpcTime)
-			if timeElapsed > electionTime {
-				Pf("[%v] Election elapsed by [%v] was expected [%v] ", me, timeElapsed, electionTime)
+			if timeElapsed > electionAlarm {
+				Pf("[%v] timeout after [%v] was expected [%v] current state [%v] ", me, timeElapsed, electionAlarm, state)
 
 				if state == Follower{
 					rf.BecomeCandidate()
@@ -438,6 +498,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 
+	Pf("[%v] Bought to life ", rf.me)
 	// Your initialization code here (2A, 2B, 2C).
 
 
@@ -446,9 +507,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.totalServers = len(peers)
 	rf.currentTerm = 1
 	rf.votedFor = rf.totalServers + 1
-	rf.ResetElectionAlarm()
 	rf.lastReceived = time.Now()
-	Pf("[%v] Election Alarm set to %v", rf.me, rf.electionAlarm)
 
 	go rf.BecomeFollower()
 
@@ -467,9 +526,20 @@ func Make(peers []*labrpc.ClientEnd, me int,
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
+
 	var term int
 	var isleader bool
 	// Your code here (2A).
+    rf.mu.Lock()
+	Pf("[%v] Asking State, current state is [%v] and term is [%v]", rf.me, rf.state, rf.currentTerm)
+    term = rf.currentTerm
+    if rf.state == Leader {
+        isleader = true
+    } else{
+        isleader = false
+    }
+    rf.mu.Unlock()
+
 	return term, isleader
 }
 
