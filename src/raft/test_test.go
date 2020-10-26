@@ -8,18 +8,36 @@ package raft
 // test with the original before submitting.
 //
 
-import "testing"
-import "fmt"
-import "time"
-import "math/rand"
-import "sync/atomic"
-import "sync"
+import (
+	"fmt"
+	"math/rand"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
 const RaftElectionTimeout = 1000 * time.Millisecond
 
 func TestInitialElection2A(t *testing.T) {
+	Pf("")
+	Pf("")
+
+	Pf("++++++++++++++++++++++= NEW +++++++++++++++++++++++++++++++++++")
+	Pf("")
+	Pf("")	
+	Pf("")
+
+	Pf("")
+	Pf("")
+	Pf("")
+	Pf("")	
+	Pf("")
+
+	Pf("")
+	Pf("")
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -51,6 +69,8 @@ func TestInitialElection2A(t *testing.T) {
 }
 
 func TestReElection2A(t *testing.T) {
+
+
 	servers := 3
 	cfg := make_config(t, servers, false)
 	defer cfg.cleanup()
@@ -60,30 +80,74 @@ func TestReElection2A(t *testing.T) {
 	leader1 := cfg.checkOneLeader()
 
 	// if the leader disconnects, a new one should be elected.
+	Pf("")
+	Pf("")
+
+	Pf(" DISCONNECT LEADER _____________> %v", leader1)
+	Pf("")
+	Pf("")
+
 	cfg.disconnect(leader1)
 	cfg.checkOneLeader()
+	Pf("")
 
 	// if the old leader rejoins, that shouldn't
 	// disturb the new leader.
+	Pf(" REJOIN OLD LEADER ++++++++++++++++++++++> %v", leader1)
+	Pf("")
+	Pf("")
+
 	cfg.connect(leader1)
 	leader2 := cfg.checkOneLeader()
+	Pf("")
 
 	// if there's no quorum, no leader should
 	// be elected.
+	Pf(" NO QUORUM DISCONNECTED _________________________> %v %v", leader2, (leader2+1)%servers)
+	Pf("")
+	Pf("")
+
 	cfg.disconnect(leader2)
 	cfg.disconnect((leader2 + 1) % servers)
 	time.Sleep(2 * RaftElectionTimeout)
 	cfg.checkNoLeader()
+	Pf("")
 
 	// if a quorum arises, it should elect a leader.
+	Pf("  QUORUM ARISES __________________________> %v", (leader2+1)%servers)
+	Pf("")
+	Pf("")
+
 	cfg.connect((leader2 + 1) % servers)
 	cfg.checkOneLeader()
+	Pf("")
 
 	// re-join of last node shouldn't prevent leader from existing.
+	Pf(" LAST NODE REJOIN __________________> %v", leader2)
+	Pf("")
+	Pf("")
+
 	cfg.connect(leader2)
 	cfg.checkOneLeader()
+	Pf("")
+	Pf("")
+	Pf("")	
+	Pf("")
 
+	Pf("")
+	Pf("")
+	Pf("")	
+	Pf("")
+
+	Pf("")
+	Pf("")
+	Pf("")	
+	Pf("")
+
+	Pf("")
+	Pf("")
 	cfg.end()
+	
 }
 
 func TestBasicAgree2B(t *testing.T) {
