@@ -1,0 +1,26 @@
+
+Lab 2A 
+
+1. Compile Errors : Typos, wrong parameter passing
+2. Index out of range 
+    Was due to in a new follower could not find term in the first index 
+    Because I did not initilize it 
+3. Deadlock is there
+    In one place was calling a function in a lock then in that function was also waiting
+    for the lock
+
+4. Not getting majority votes for any one server
+5. No leader getting selected for a term
+6. Multiple leaders for a term
+7. Converting a Leader to follower based on the response from an old term RPC
+8. Too many RPC calls
+9. Timeout happening much much later than expected
+10. Resseting alarm when not required
+11. Know when to become a follower
+12. Multiple heartbeats to a server in a single send
+13. RPC's from old terms
+14. Handling TimeoutAlarm for Leader
+15. What does Resseting election alarm mean ?
+16. Locking conditions but then calling a thread while holding the lock therby creating Deadlock
+17. Checking for majority for a candidate /
+18. 
