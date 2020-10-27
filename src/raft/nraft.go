@@ -1,4 +1,3 @@
-////Pf("[%v] ", rf.me)
 package raft
 
 //
@@ -93,7 +92,7 @@ const (
 
 func (rf *Raft) NewFollower() {
 	if rf.killed() {
-		//Pf("[%v]###################### KILL CALLED New Follower DEAD NOW  ##############################", rf.raftId)
+		Pf("[%v]###################### KILL CALLED New Follower DEAD NOW  ##############################", rf.raftId)
 		return
 	}
 
@@ -132,11 +131,74 @@ func (rf *Raft) BecomeLeader() {
 func (rf *Raft) BecomeCandidate() {
 
 	rf.mu.Lock()
+	//rf.lastReceived = time.Now()
 
-	Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
+	Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm+1)
 	rf.state = Candidate
 	rf.mu.Unlock()
 	rf.NewElection()
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Resetting election
+////////////////////////////////////////////////////////////////////////////////
+
+//
+// Set election time between 150-300 milliseconds
+//
+func (rf *Raft) ResetElectionAlarm() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.lastReceived = time.Now()
+	rf.electionAlarm = time.Duration(rand.Intn(150)+150) * time.Millisecond
+	Pf("[%v] Election alarm reset to : [%v] for term [%v]", rf.me, rf.electionAlarm, rf.currentTerm)
+}
+
+/*
+	Run election timer in follower and candidate state to check if its time
+	for another election
+
+	This will be long running thread
+*/
+
+func (rf *Raft) StartElectionCountdown() {
+
+	for {
+		if rf.killed() {
+			Pf("[%v]###################### KILL CALLED Start Election Countdown DEAD NOW  ##############################", rf.raftId)
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+
+		rf.mu.Lock()
+
+		state := rf.state
+		lastRpcTime := rf.lastReceived
+		electionAlarm := rf.electionAlarm
+		me := rf.me
+		term := rf.currentTerm
+		rf.mu.Unlock()
+
+		if state == Leader {
+
+			// TODO Somehow stop this thread / set election alarm infinite
+			rf.mu.Lock()
+			rf.electionAlarm = 20 * time.Second
+			rf.mu.Unlock()
+		} else {
+			timeElapsed := time.Now().Sub(lastRpcTime)
+			if timeElapsed > electionAlarm {
+				Pf("[%v] timeout after [%v] was expected [%v] current state [%v] for term [%v]", me, timeElapsed, electionAlarm, state, term)
+
+				if state == Follower {
+					rf.BecomeCandidate()
+				} else {
+					rf.NewElection()
+				}
+
+			}
+		}
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -162,7 +224,7 @@ func (rf *Raft) NewElection() {
 		if server != me {
 			go func(server int) {
 				if rf.killed() {
-					//Pf("[%v]###################### KILL CALLED REQUEST VOTE DEAD NOW  ##############################", rf.raftId)
+					Pf("[%v]###################### KILL CALLED REQUEST VOTE DEAD NOW  ##############################", rf.raftId)
 					return
 				}
 
@@ -189,7 +251,7 @@ func (rf *Raft) NewElection() {
 
 				} else {
 					if serverTerm > currentTerm {
-						////Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
+
 						rf.mu.Lock()
 						Pf("[%v] VOTER Term greater than Candidate Term [%v] ", rf.me, rf.currentTerm)
 						rf.currentTerm = serverTerm
@@ -256,11 +318,12 @@ type RequestVoteReply struct {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 
-	rf.ResetElectionAlarm()
+	//rf.ResetElectionAlarm() // This is a **HUGE** mistake DO NOT NEED TO RESET ELECTION TIMER ON EVERY REQUEST VOTE
+	// THIS NEEDS TO BE DONE ONLY IF VOTE IS GRANTED
 
 	rf.mu.Lock()
 
-	rf.lastReceived = time.Now()
+	// rf.lastReceived = time.Now()
 	//isFollower := (rf.state == Follower)
 	currentTerm := rf.currentTerm
 
@@ -269,14 +332,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	Pf("[%v] args Term [%v] current Term [%v]  ", rf.me, args.Term, rf.currentTerm)
 	Pf("[%v] Voted For [%v] ", rf.me, rf.votedFor)
 
+	res := true
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
-		//Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
+
 		reply.VoteGranted = false
+		res = false
+
 	} else if args.Term == rf.currentTerm {
 		if rf.votedFor == rf.totalServers+1 || rf.votedFor == args.CandidateId {
 
-			////Pf    ("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
 			reply.VoteGranted = true
 			rf.votedFor = args.CandidateId
 		}
@@ -289,18 +354,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	Pf("[%v] REQUEST RPC _______END ", rf.me)
 	rf.mu.Unlock()
 
+	if res {
+		rf.ResetElectionAlarm()
+	}
 	if args.Term > currentTerm {
 		rf.mu.Lock()
+		Pf("[%v] args Term  [%v]  is greater than current Term : %v So becoming Follower", rf.me, args.Term, rf.currentTerm)
 		rf.currentTerm = args.Term
 		rf.mu.Unlock()
 		rf.BecomeFollower()
 	}
 
-	//if args.Term > rf.currentTerm {
-	//    //Pf("[%v] Term of [%v] is greater [%v] than Receiver Term [%v] ", rf.me,args.CandidateId,args.Term, rf.currentTerm)
-	//    rf.currentTerm = args.Term
-	//    rf.BecomeFollower()
-	//}
 }
 
 //
@@ -344,7 +408,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 func (rf *Raft) Heartbeat() {
 
 	rf.mu.Lock()
-	////Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
+
 	me := rf.me
 	rf.mu.Unlock()
 
@@ -353,9 +417,9 @@ func (rf *Raft) Heartbeat() {
 		// followers is 150-300. As the no of servers increase one should decrease
 		// the heartbeat sending time
 
-		time.Sleep(99 * time.Millisecond)
+		time.Sleep(145 * time.Millisecond)
 		if rf.killed() {
-			//Pf("%v###################### KILL CALLED HEARTBEAT DEAD NOW  ##############################", me)
+			Pf("%v###################### KILL CALLED HEARTBEAT DEAD NOW  ##############################", me)
 			return
 		}
 
@@ -368,16 +432,24 @@ func (rf *Raft) Heartbeat() {
 		if state == Leader {
 			for server, _ := range rf.peers {
 				if server != me {
-					go func(server int) {
+					rf.mu.Lock()
+					forTerm := rf.currentTerm
+					rf.mu.Unlock()
+					go func(server int, forTerm int) {
 						term, success := rf.SendHeartbeat(server)
-						if !success {
+						rf.mu.Lock()
+						curTerm := rf.currentTerm
+						Pf("[%v] Heartbeat sent for Term [%v] to server [%v] and currentTerm is [%v]", rf.me, forTerm, server, curTerm)
+						rf.mu.Unlock()
+						// If the reply is for an older term then no need to become follower
+						if !success && (forTerm == curTerm) {
 							rf.mu.Lock()
-							////Pf    ("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
+							Pf("[%v] Did not get a successful result for Term So Beciming follower [%v] ", rf.me, rf.currentTerm)
 							rf.currentTerm = term
 							rf.mu.Unlock()
 							rf.BecomeFollower()
 						}
-					}(server)
+					}(server, forTerm)
 				}
 			}
 		} else {
@@ -389,7 +461,7 @@ func (rf *Raft) Heartbeat() {
 func (rf *Raft) SendHeartbeat(server int) (int, bool) {
 
 	rf.mu.Lock()
-	////Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
+
 	args := AppendEntriesArgs{}
 	args.Term = rf.currentTerm
 	args.LeaderId = rf.me
@@ -434,21 +506,32 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// Your code here (2A, 2B).
 
 	rf.mu.Lock()
-	////Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
-	if args.Term > rf.currentTerm {
-		////Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
+	me := rf.me
+	res := true
+	curState := rf.state
+	if args.Term >= rf.currentTerm {
 		rf.currentTerm = args.Term
+		reply.Term = rf.currentTerm
+		reply.Success = true
+		if args.Term == rf.currentTerm {
+			res = false
+		}
+	} else {
+		// reply.Term = rf.currentTerm
+		reply.Success = false
+		res = false
 	}
-	Pf("[%v] Become follower got append entries RPC from [%v] for term [%v] currentTerm is [%v]", rf.me, args.LeaderId, args.Term, rf.currentTerm)
-	reply.Term = rf.currentTerm
-	reply.Success = true
 	rf.mu.Unlock()
 
-	rf.ResetElectionAlarm()
+	if res || curState != Follower {
+		Pf("[%v] Become follower ", mec )
+		rf.BecomeFollower()
+
+	}
 	rf.mu.Lock()
+	Pf("[%v] Got append entries RPC from [%v] for term [%v] currentTerm is [%v] result [%v]", rf.me, args.LeaderId, args.Term, rf.currentTerm, reply.Success)
 	rf.lastReceived = time.Now()
 	rf.mu.Unlock()
-	rf.BecomeFollower()
 
 }
 
@@ -484,66 +567,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// Resetting election
-////////////////////////////////////////////////////////////////////////////////
-
-//
-// Set election time between 150-300 milliseconds
-//
-func (rf *Raft) ResetElectionAlarm() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	rf.electionAlarm = time.Duration(rand.Intn(150)+150) * time.Millisecond
-	//Pf("[%v] Election alarm reset to : [%v] for term [%v]", rf.me, rf.electionAlarm, rf.currentTerm)
-}
-
-/*
-	Run election timer in follower and candidate state to check if its time
-	for another election
-
-	This will be long running thread
-*/
-
-func (rf *Raft) StartElectionCountdown() {
-
-	for {
-		if rf.killed() {
-			//Pf("[%v]###################### KILL CALLED Start Election Countdown DEAD NOW  ##############################", rf.raftId)
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-
-		rf.mu.Lock()
-		////Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
-		state := rf.state
-		lastRpcTime := rf.lastReceived
-		electionAlarm := rf.electionAlarm
-		me := rf.me
-		rf.mu.Unlock()
-
-		if state == Leader {
-			////Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm)
-			// TODO Somehow stop this thread / set election alarm infinite
-			rf.mu.Lock()
-			rf.electionAlarm = 20 * time.Second
-			rf.mu.Unlock()
-		} else {
-			timeElapsed := time.Now().Sub(lastRpcTime)
-			if timeElapsed > electionAlarm {
-				Pf("[%v] timeout after [%v] was expected [%v] current state [%v] ", me, timeElapsed, electionAlarm, state)
-
-				if state == Follower {
-					rf.BecomeCandidate()
-				} else {
-					rf.NewElection()
-				}
-
-			}
-		}
-	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -599,13 +622,13 @@ func (rf *Raft) GetState() (int, bool) {
 	var isleader bool
 	// Your code here (2A).
 	rf.mu.Lock()
-	//Pf("0000000000000000000000000000000000000000")
+
 	Pf("0000000000000000000000000000000000000000")
 	Pf("[%v] Asking State, current state is [%v] and term is [%v] with raftId [%v]", rf.me, rf.state, rf.currentTerm, rf.raftId)
 	timeElapsed := time.Now().Sub(rf.lastReceived)
 	Pf("[%v]  Time since last RPC [%v] was expected [%v] current state [%v] ", rf.me, timeElapsed, rf.electionAlarm, rf.state)
 	Pf("0000000000000000000000000000000000000000")
-	//Pf("0000000000000000000000000000000000000000")
+
 	term = rf.currentTerm
 	if rf.state == Leader {
 		isleader = true
