@@ -97,12 +97,14 @@ const (
 
 func (rf *Raft) NewFollower() {
 	if rf.killed() {
-		Pf("[%v]###################### KILL CALLED New Follower DEAD NOW  ##############################", rf.raftId)
+		//Pf("[%v]###################### KILL CALLED New Follower DEAD NOW  ##############################", rf.raftId)
 		return
 	}
 
 	rf.mu.Lock()
-	Pf("[%v] Asked to become NEW  Follower for term [%v] ", rf.me, rf.currentTerm)
+    firstEntry := LogEntry{Term:0, Command :0}
+    rf.log = append(rf.log, firstEntry)
+	//Pf("[%v] Asked to become NEW  Follower for term [%v] ", rf.me, rf.currentTerm)
 	rf.state = Follower
 	rf.mu.Unlock()
 	rf.ResetElectionAlarm()
@@ -111,12 +113,12 @@ func (rf *Raft) NewFollower() {
 
 func (rf *Raft) BecomeFollower() {
 	if rf.killed() {
-		Pf("[%v]###################### KILL CALLED Become Follower DEAD NOW  ##############################", rf.raftId)
+		//Pf("[%v]###################### KILL CALLED Become Follower DEAD NOW  ##############################", rf.raftId)
 		return
 	}
 
 	rf.mu.Lock()
-	Pf("[%v] Asked to become Follower for term [%v] ", rf.me, rf.currentTerm)
+	//Pf("[%v] Asked to become Follower for term [%v] ", rf.me, rf.currentTerm)
 	rf.state = Follower
 	rf.mu.Unlock()
 	rf.ResetElectionAlarm()
@@ -125,8 +127,10 @@ func (rf *Raft) BecomeFollower() {
 func (rf *Raft) BecomeLeader() {
 
 	rf.mu.Lock()
-	Pf("[%v] Asked to become Leader for term [%v] ", rf.me, rf.currentTerm)
-	rf.state = Leader
+    if rf.state != Leader {
+        //Pf("[%v] Asked to become Leader for term [%v] ", rf.me, rf.currentTerm)
+        rf.state = Leader
+    }
 	rf.mu.Unlock()
 
 	// TODO : Start sending heartbeats
@@ -138,7 +142,7 @@ func (rf *Raft) BecomeCandidate() {
 	rf.mu.Lock()
 	//rf.lastReceived = time.Now()
 
-	Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm+1)
+	//Pf("[%v] Asked to become Candidate for term [%v] ", rf.me, rf.currentTerm+1)
 	rf.state = Candidate
 	rf.mu.Unlock()
 	rf.NewElection()
@@ -155,8 +159,8 @@ func (rf *Raft) ResetElectionAlarm() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	rf.lastReceived = time.Now()
-	rf.electionAlarm = time.Duration(rand.Intn(150)+150) * time.Millisecond
-	Pf("[%v] Election alarm reset to : [%v] for term [%v]", rf.me, rf.electionAlarm, rf.currentTerm)
+	rf.electionAlarm = time.Duration(rand.Intn(250)+150) * time.Millisecond
+	//Pf("[%v] Election alarm reset to : [%v] for term [%v]", rf.me, rf.electionAlarm, rf.currentTerm)
 }
 
 /*
@@ -170,18 +174,18 @@ func (rf *Raft) StartElectionCountdown() {
 
 	for {
 		if rf.killed() {
-			Pf("[%v]###################### KILL CALLED Start Election Countdown DEAD NOW  ##############################", rf.raftId)
+			//Pf("[%v]###################### KILL CALLED Start Election Countdown DEAD NOW  ##############################", rf.raftId)
 			return
 		}
-		time.Sleep(5 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 
 		rf.mu.Lock()
 
 		state := rf.state
 		lastRpcTime := rf.lastReceived
 		electionAlarm := rf.electionAlarm
-		me := rf.me
-		term := rf.currentTerm
+		//me := rf.me
+		//term := rf.currentTerm
 		rf.mu.Unlock()
 
 		if state == Leader {
@@ -193,7 +197,7 @@ func (rf *Raft) StartElectionCountdown() {
 		} else {
 			timeElapsed := time.Now().Sub(lastRpcTime)
 			if timeElapsed > electionAlarm {
-				Pf("[%v] timeout after [%v] was expected [%v] current state [%v] for term [%v]", me, timeElapsed, electionAlarm, state, term)
+				//Pf("[%v] timeout after [%v] was expected [%v] current state [%v] for term [%v]", me, timeElapsed, electionAlarm, state, term)
 
 				if state == Follower {
 					rf.BecomeCandidate()
@@ -215,7 +219,7 @@ func (rf *Raft) NewElection() {
 	rf.mu.Lock()
 
 	rf.currentTerm += 1
-	Pf("[%v] New election for term [%v] ", rf.me, rf.currentTerm)
+	//Pf("[%v] New election for term [%v] ", rf.me, rf.currentTerm)
 
 	rf.votedFor = rf.me
 	me := rf.me
@@ -229,7 +233,7 @@ func (rf *Raft) NewElection() {
 		if server != me {
 			go func(server int) {
 				if rf.killed() {
-					Pf("[%v]###################### KILL CALLED REQUEST VOTE DEAD NOW  ##############################", rf.raftId)
+					//Pf("[%v]###################### KILL CALLED REQUEST VOTE DEAD NOW  ##############################", rf.raftId)
 					return
 				}
 
@@ -244,21 +248,23 @@ func (rf *Raft) NewElection() {
 					totalVotes += 1
 					majorityServers := rf.totalServers/2 + 1
 					tv := totalVotes
-					Pf("[%v] vote from [%v] result [%v] now Total Votes [%v] out of [%v] for Term : [%v]", rf.me, server, voteGranted, totalVotes, majorityServers, rf.currentTerm)
+					//Pf("[%v] vote from [%v] result [%v] now Total Votes [%v] out of [%v] for Term : [%v]", rf.me, server, voteGranted, totalVotes, majorityServers, rf.currentTerm)
 
-					rf.mu.Unlock()
+                    rf.mu.Unlock()
 
 					if tv >= majorityServers {
-						Pf("[%v] total votes received >= majority ", rf.me)
-						rf.BecomeLeader()
-						return
+                        rf.mu.Lock()
+						//Pf("[%v] total votes received >= majority ", rf.me)
+                        rf.mu.Unlock()
+                        rf.BecomeLeader()
+                        return
 					}
 
 				} else {
 					if serverTerm > currentTerm {
 
 						rf.mu.Lock()
-						Pf("[%v] VOTER Term greater than Candidate Term [%v] ", rf.me, rf.currentTerm)
+						//Pf("[%v] VOTER Term greater than Candidate Term [%v] ", rf.me, rf.currentTerm)
 						rf.currentTerm = serverTerm
 						rf.mu.Unlock()
 
@@ -269,30 +275,6 @@ func (rf *Raft) NewElection() {
 			}(server)
 		}
 	}
-}
-
-func (rf *Raft) GetVote(server int) (bool, int) {
-
-	rf.mu.Lock()
-
-	args := RequestVoteArgs{}
-	args.Term = rf.currentTerm
-	args.CandidateId = rf.me
-	reply := RequestVoteReply{}
-	Pf("[%v] Get vote from [%v] for term [%v] ", rf.me, server, rf.currentTerm)
-
-	//me := rf.me
-	//currentTerm := rf.currentTerm
-
-	rf.mu.Unlock()
-
-	var ok bool
-	ok = rf.sendRequestVote(server, &args, &reply)
-	for !ok {
-		time.Sleep(5 * time.Millisecond)
-		ok = rf.sendRequestVote(server, &args, &reply)
-	}
-	return reply.VoteGranted, reply.Term
 }
 
 //
@@ -321,6 +303,49 @@ type RequestVoteReply struct {
 	VoteGranted bool
 }
 
+func (rf *Raft) GetVote(server int) (bool, int) {
+
+	rf.mu.Lock()
+
+	args := RequestVoteArgs{}
+	args.Term = rf.currentTerm
+	args.CandidateId = rf.me
+    args.LastLogIndex, args.LastLogTerm = rf.GetLastLogData()
+    /Pf("[%v] args for Getting Vote %v", rf.me, args)
+
+	reply := RequestVoteReply{}
+	//Pf("[%v] Get vote from [%v] for term [%v] ", rf.me, server, rf.currentTerm)
+
+	//me := rf.me
+	//currentTerm := rf.currentTerm
+
+	rf.mu.Unlock()
+
+	//var ok bool
+    ok := rf.sendRequestVote(server, &args, &reply)
+	for !ok {
+		time.Sleep(10 * time.Millisecond)
+		ok = rf.sendRequestVote(server, &args, &reply)
+	}
+	return reply.VoteGranted, reply.Term
+}
+func (rf *Raft) GetLastLogData () (int, int)   {
+    index := len(rf.log) - 1
+    term := rf.log[index].Term
+    return index, term
+
+}
+func (rf *Raft) IsMoreUptoDate(args *RequestVoteArgs) bool {
+    lastLogTerm, lastLogIndex := rf.GetLastLogData()
+    // If logs have last log entry same then log with bigger len is more up-to-date 
+    // Else the log with later term
+    if args.LastLogTerm  == lastLogTerm {
+        return lastLogIndex >= args.LastLogIndex
+    } else {
+        return lastLogTerm >= args.LastLogTerm
+    }
+
+}
 //
 // example RequestVote RPC handler.
 //
@@ -335,11 +360,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// rf.lastReceived = time.Now()
 	//isFollower := (rf.state == Follower)
 	currentTerm := rf.currentTerm
+    isMoreUptoDate := rf.IsMoreUptoDate(args)
 
-	Pf("[%v] REQUEST RPC _______START ", rf.me)
-	Pf("[%v] Vote requested by [%v] for term [%v] ", rf.me, args.CandidateId, args.Term)
-	Pf("[%v] args Term [%v] current Term [%v]  ", rf.me, args.Term, rf.currentTerm)
-	Pf("[%v] Voted For [%v] ", rf.me, rf.votedFor)
+	Pf("[%v] REQUEST RPC more up-to-date ? %v ", rf.me, isMoreUptoDate)
+	//Pf("[%v] Vote requested by [%v] for term [%v] ", rf.me, args.CandidateId, args.Term)
+	//Pf("[%v] args Term [%v] current Term [%v]  ", rf.me, args.Term, rf.currentTerm)
+	//Pf("[%v] Voted For [%v] ", rf.me, rf.votedFor)
 
 	res := true
 	reply.Term = rf.currentTerm
@@ -349,7 +375,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		res = false
 
 	} else if args.Term == rf.currentTerm {
-		if rf.votedFor == rf.totalServers+1 || rf.votedFor == args.CandidateId {
+		if (rf.votedFor == rf.totalServers+1 || rf.votedFor == args.CandidateId) && isMoreUptoDate{
 
 			reply.VoteGranted = true
 			rf.votedFor = args.CandidateId
@@ -359,8 +385,8 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = args.CandidateId
 	}
 
-	Pf("[%v] reply to [%v]  is : %v, %v", rf.me, args.CandidateId, reply.Term, reply.VoteGranted)
-	Pf("[%v] REQUEST RPC _______END ", rf.me)
+	//Pf("[%v] reply to [%v]  is : %v, %v", rf.me, args.CandidateId, reply.Term, reply.VoteGranted)
+	//Pf("[%v] REQUEST RPC _______END ", rf.me)
 	rf.mu.Unlock()
 
 	if res {
@@ -368,10 +394,14 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	}
 	if args.Term > currentTerm {
 		rf.mu.Lock()
-		Pf("[%v] args Term  [%v]  is greater than current Term : %v So becoming Follower", rf.me, args.Term, rf.currentTerm)
+		//Pf("[%v] args Term  [%v]  is greater than current Term : %v ", rf.me, args.Term, rf.currentTerm)
 		rf.currentTerm = args.Term
+        curState := rf.state
 		rf.mu.Unlock()
+       if curState != Follower{
+		//Pf("[%v] args Term  [%v]  is greater than current Term : %v So becoming Follower", rf.me, args.Term, rf.currentTerm)
 		rf.BecomeFollower()
+       }
 	}
 
 }
@@ -426,9 +456,10 @@ func (rf *Raft) Heartbeat() {
 		// followers is 150-300. As the no of servers increase one should decrease
 		// the heartbeat sending time
 
-		time.Sleep(145 * time.Millisecond)
+		time.Sleep(195 * time.Millisecond)
+        //Pf("000000 %v", time.Now())
 		if rf.killed() {
-			Pf("%v###################### KILL CALLED HEARTBEAT DEAD NOW  ##############################", me)
+			//Pf("%v###################### KILL CALLED HEARTBEAT DEAD NOW  ##############################", me)
 			return
 		}
 
@@ -445,29 +476,38 @@ func (rf *Raft) Heartbeat() {
 					forTerm := rf.currentTerm
 					rf.mu.Unlock()
 					go func(server int, forTerm int) {
-						term, success := rf.SendHeartbeat(server)
 						rf.mu.Lock()
-						curTerm := rf.currentTerm
-						Pf("[%v] Heartbeat sent for Term [%v] to server [%v] and currentTerm is [%v]", rf.me, forTerm, server, curTerm)
+                        ////Pf("[%v] STARTED  ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++", me)
+						//Pf("[%v] STARTED  +++++++++++++++ Heartbeat TO be sent for Term [%v] to server [%v] and currentTerm is [%v]", rf.me, forTerm, server, rf.currentTerm)
 						rf.mu.Unlock()
+						//term, success := rf.SendHeartbeat(server,forTerm)
+						rf.SendHeartbeat(server,forTerm)
+                        //Pf("%v, %v",term,success)
+					//	rf.mu.Lock()
+						//curTerm := rf.currentTerm
+					//	rf.mu.Unlock()
 						// If the reply is for an older term then no need to become follower
-						if !success && (forTerm == curTerm) {
-							rf.mu.Lock()
-							Pf("[%v] Did not get a successful result for Term So Beciming follower [%v] ", rf.me, rf.currentTerm)
-							rf.currentTerm = term
-							rf.mu.Unlock()
-							rf.BecomeFollower()
-						}
+						//if !success && (forTerm == curTerm) {
+						//	rf.mu.Lock()
+                        //Pf("%v %v, %v", rf.me, term, success)
+						//	//Pf("[%v] Did not get a successful result for Term So Becoming follower [%v] ", rf.me, rf.currentTerm)
+						//	rf.currentTerm = term
+						//	rf.mu.Unlock()
+						//	rf.BecomeFollower()
+						//}
 					}(server, forTerm)
 				}
 			}
 		} else {
+            rf.mu.Lock()
+            Pf("[%v] Killing this thread, currentState [%v]", rf.me, rf.state)
+            rf.mu.Unlock()
 			return
 		}
 	}
 }
 
-func (rf *Raft) SendHeartbeat(server int) (int, bool) {
+func (rf *Raft) SendHeartbeat(server int ,forTerm int) (int, bool) {
 
 	rf.mu.Lock()
 
@@ -476,14 +516,93 @@ func (rf *Raft) SendHeartbeat(server int) (int, bool) {
 	args.LeaderId = rf.me
 
 	reply := AppendEntriesReply{}
+   // me := rf.me
 	rf.mu.Unlock()
+    //ok := false
+	//ok := rf.sendAppendEntry(server, &args, &reply)
+	rf.sendAppendEntry(server, &args, &reply)
+    //rf.mu.Lock()
+    //Pf("-=-=-=-=-=-=-=-=-=-=-=OK: %v-=-=-=-=REPLY: %v-=-=-=-=-", ok, reply)
+      //Pf("[%v] [%v] append RPC failure  for server [%v] currentTerm [%v], for term [%v] REPLY RECEIVED: %v, %v", rf.me, rf.state, server, rf.currentTerm, forTerm,reply.Term, reply.Success)
 
-	ok := rf.sendAppendEntries(server, &args, &reply)
+	//if ok {
+	//	return reply.Term, reply.Success
+	//} else {
+   // for !ok {
+   //     //time.Sleep(50 * time.Millisecond)
+   // rf.mu.Lock()
+   //   //Pf("[%v] %v Result from append RPC is a failure  for server [%v] for term [%v]: %v, %v", rf.me, rf.state, server, rf.currentTerm, forTerm, reply.Success)
+   //     //Pf("[%v] AGAIN ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++", me)
+   // rf.mu.Unlock()
+   //       ok = rf.sendAppendEntry(server, &args, &reply)
+   // }
+   // rf.mu.Lock()
+    //Pf("[%v] ENDED --------------------- forTerm %v Reply is  %v by %v ", rf.me, forTerm, reply, server)
+    //rf.mu.Unlock()
+    return reply.Term, reply.Success
 
-	if ok {
-		return reply.Term, reply.Success
-	}
-	return 4, false
+
+       // return 4, false 
+    //}
+}
+
+func (rf *Raft) StartAgreement() {
+
+    for server, _ := range rf.peers {
+        if server != rf.me {
+
+            rf.mu.Lock()
+            forTerm := rf.currentTerm
+            rf.mu.Unlock()
+
+            go func(server int, forTerm int) {
+                rf.mu.Lock()
+                args := AppendEntriesArgs{}
+                args.Term = rf.currentTerm
+                args.LeaderId = rf.me
+                args.PrevLogIndex = len(rf.log) - 1
+                args.PrevLogTerm = rf.log[1].Term
+                //args.Entries = []LogEntry
+                args.LeaderCommit = rf.commitIndex
+
+                //nextIndex := len(rf.log)
+
+                Pf("[%v] SendingAppendEntries to server [%v] with arguments [%v] for Term [%v]", rf.me, server, args, forTerm)
+
+                rf.mu.Unlock()
+                //term, success := rf.SendAppendEntries(server)
+                //if !success {
+                //    // Can be multiple reasons for not acknowledging this RPC
+                //    // Leader Term < Follower Term 
+                //    // Last log entry Term did not match
+                //    rf.mu.Lock()
+                //    me := rf.me
+                //    curTerm := rf.currentTerm
+                //    rf.mu.Unlock()
+
+                //    if curTerm < term {
+                //        rf.mu.Lock()
+                //        rf.currentTerm = term
+                //        rf.mu.Unlock()
+                //        rf.BecomeFollower()
+                //        Pf("[%v] STOPPING AGREEMENT met a server [%v] with higher term [%v] than mine [%v]",
+                //            me, server, term, curTerm)
+                //        return
+                //    } else {
+                //        // Decrease the nextIndex + some more stuff
+
+                //    }
+
+
+
+
+                //}
+            }(server, forTerm)
+        }
+
+    }
+
+
 }
 
 //
@@ -500,7 +619,7 @@ type AppendEntriesArgs struct {
     // For 2B
     PrevLogIndex int
     PrevLogTerm int
-    Entries []LogEntry{}
+    Entries []LogEntry
     LeaderCommit int
 
 }
@@ -522,7 +641,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// Your code here (2A, 2B).
 
 	rf.mu.Lock()
-	me := rf.me
+	//me := rf.me
 	res := true
 	curState := rf.state
 	if args.Term >= rf.currentTerm {
@@ -533,19 +652,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			res = false
 		}
 	} else {
-		// reply.Term = rf.currentTerm
+		reply.Term = rf.currentTerm
 		reply.Success = false
 		res = false
 	}
 	rf.mu.Unlock()
 
 	if res || curState != Follower {
-		Pf("[%v] Become follower ", me )
+		//Pf("[%v] Become follower ", me )
 		rf.BecomeFollower()
 
 	}
 	rf.mu.Lock()
-	Pf("[%v] Got append entries RPC from [%v] for term [%v] currentTerm is [%v] result [%v]", rf.me, args.LeaderId, args.Term, rf.currentTerm, reply.Success)
+	//Pf("[%v] Got append entries RPC from [%v] for term [%v] currentTerm is [%v] result [%v]", rf.me, args.LeaderId, args.Term, rf.currentTerm, reply.Success)
 	rf.lastReceived = time.Now()
 	rf.mu.Unlock()
 
@@ -580,7 +699,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 // that the caller passes the address of the reply struct with &, not
 // the struct itself.
 //
-func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+func (rf *Raft) sendAppendEntry(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
@@ -609,7 +728,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.raftId = rand.Intn(5000) // Created for debugging purposes
 
-	Pf("[%v] Bought to life with raftId : [%v]", rf.me, rf.raftId)
+	//Pf("[%v] Bought to life with raftId : [%v]", rf.me, rf.raftId)
 	// Your initialization code here (2A, 2B, 2C).
 
 	// For 2A  only
@@ -619,18 +738,19 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.votedFor = rf.totalServers + 1
 	rf.lastReceived = time.Now()
 
-	go rf.NewFollower()
 
     // For 2B
     rf.log = []LogEntry{}
-    rf.commitIndex = 0 // To be initialized at 0 becaise log index starts from 1
+    rf.commitIndex = 0 // To be initialized at 0 because log index starts from 1
     rf.lastApplied = 0
 
+	go rf.NewFollower()
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
 
 	return rf
 }
+
 
 //
 // the service using Raft (e.g. a k/v server) wants to start
@@ -653,27 +773,30 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	// Your code here (2B).
     rf.mu.Lock()
-    Pf("[%v] command received : %v ", rf.me, command)
+    //Pf("[%v] command received : %v state : %v", rf.me, command, rf.state)
     if  rf.state == Leader{
         index = rf.index
         term = rf.currentTerm
+        rf.AppendEntryToLog(command)
         // TODO : start agreement
     } else {
         isLeader = false
     }
 
-    Pf("[%v] START command received, result : %v, %v, %v", rf.me, index, term, isLeader)
+    //Pf("[%v] START command received, result : %v, %v, %v", rf.me, index, term, isLeader)
     rf.mu.Unlock()
 
 	return index, term, isLeader
 }
 
-func StartAgreement(){
 
-
-
+func (rf *Raft) AppendEntryToLog(command interface{}) {
+       //rf.mu.Lock()
+       newEntry := LogEntry{Term : rf.currentTerm, Command : command}
+       rf.log = append(rf.log, newEntry)
+       //Pf("[%v] NEW entry appended to log current log is : %v",rf.me, rf.log)
+       //rf.mu.Unlock()
 }
-
 ////////////////////////////////////////////////////////////////////////////////
 // Lab 2B - 2C
 ////////////////////////////////////////////////////////////////////////////////
@@ -689,9 +812,9 @@ func (rf *Raft) GetState() (int, bool) {
 
 	Pf("0000000000000000000000000000000000000000")
 	Pf("[%v] Asking State, current state is [%v] and term is [%v] with raftId [%v]", rf.me, rf.state, rf.currentTerm, rf.raftId)
-	 timeElapsed := time.Now().Sub(rf.lastReceived)
-	Pf("[%v]  Time since last RPC [%v] was expected [%v] current state [%v] ", rf.me, timeElapsed, rf.electionAlarm, rf.state)
-	Pf("0000000000000000000000000000000000000000")
+	// timeElapsed := time.Now().Sub(rf.lastReceived)
+	//Pf("[%v]  Time since last RPC [%v] was expected [%v] current state [%v] ", rf.me, timeElapsed, rf.electionAlarm, rf.state)
+	//Pf("0000000000000000000000000000000000000000")
 
 	term = rf.currentTerm
 	if rf.state == Leader {
@@ -757,13 +880,13 @@ func (rf *Raft) readPersist(data []byte) {
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
 	// Your code here, if desired.
-	Pf("###################### KILL CALLED ##############################")
-	Pf("###################### KILL CALLED ##############################")
-	Pf("###################### KILL CALLED ##############################")
-	Pf("###################### KILL CALLED ##############################")
-	Pf("###################### KILL CALLED ##############################")
-	Pf("###################### KILL CALLED ##############################")
-	Pf("###################### KILL CALLED ##############################")
+	//Pf("###################### KILL CALLED ##############################")
+	//Pf("###################### KILL CALLED ##############################")
+	//Pf("###################### KILL CALLED ##############################")
+	//Pf("###################### KILL CALLED ##############################")
+	//Pf("###################### KILL CALLED ##############################")
+	//Pf("###################### KILL CALLED ##############################")
+	//Pf("###################### KILL CALLED ##############################")
 }
 
 func (rf *Raft) killed() bool {
