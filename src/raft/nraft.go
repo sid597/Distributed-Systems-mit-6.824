@@ -757,20 +757,21 @@ type AppendEntriesReply struct {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 
 	rf.mu.Lock()
-	//Pf("               ")
+	// Pf("              				 ")
 	//Pf("       AE %v       ", rf.me)
 	// //Pf("[%v] Append entry for index %v", rf.me, args.ForIndex)
 	needToBecomeFollower := false
 
-	//Pf("[%v] %v New AppendEntry Received from [%v] with args {Term : %v, LeaderId : %v, PrevLogIndex : %v, PrevLogTerm : %v, Entries : %v, LeaderCommit : %v, Ri : %v}  for log %v", rf.me, args.Ri, args.LeaderId, args.Term, args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, args.Entries, args.LeaderCommit, args.Ri, rf.log)
+	// Pf("[%v] %v New AppendEntry Received from [%v] with args {Term : %v, LeaderId : %v, PrevLogIndex : %v, PrevLogTerm : %v, Entries : %v, LeaderCommit : %v, Ri : %v}  for log %v", rf.me, args.Ri, args.LeaderId, args.Term, args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, args.Entries, args.LeaderCommit, args.Ri, rf.log)
 
 	currentTerm := rf.currentTerm
 	currentState := rf.state
-	logLen := len(rf.log)
+	logLen := len(rf.log) - 1
 	// newEntry := LogEntry{}
 	entryIndex := args.PrevLogIndex
 	entryToAppend := LogEntry{}
 	heartbeat := len(args.Entries) == 0
+	reply.Success = true
 
 	// If this RPC is not a heartbeat
 	if !heartbeat {
@@ -780,6 +781,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	if heartbeat {
 		//Pf("HEARTBEAT     ")
+		// Pf("[%v] %v HEARTBEAT Received from [%v] with args {Term : %v, LeaderId : %v, PrevLogIndex : %v, PrevLogTerm : %v, Entries : %v, LeaderCommit : %v, Ri : %v}  for log %v, logLen is %v, currentTerm %v", rf.me, args.Ri, args.LeaderId, args.Term, args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, args.Entries, args.LeaderCommit, args.Ri, rf.log, logLen, currentTerm)
+
+	} else {
+		// Pf("[%v] %v New AppendEntry Received from [%v] with args {Term : %v, LeaderId : %v, PrevLogIndex : %v, PrevLogTerm : %v, Entries : %v, LeaderCommit : %v, Ri : %v}  for log %v, log len is %v,  currentTerm %v", rf.me, args.Ri, args.LeaderId, args.Term, args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, args.Entries, args.LeaderCommit, args.Ri, rf.log, logLen, currentTerm)
+
 	}
 	//Pf("[%v] logLen %v, previousLogIndex %v, entryIndex %v, entryToAppend %v", rf.me, logLen, args.PrevLogIndex, entryIndex, entryToAppend)
 
@@ -790,13 +796,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if args.Term < currentTerm || logLen < args.PrevLogIndex {
 		reply.Term = currentTerm
 		reply.Success = false
+		// Pf("___")
 		//Pf("[%v] FALSE New AppendEntry Received from [%v] Replying False ", rf.me, args.LeaderId)
 		if args.Term < currentTerm {
 			needToBecomeFollower = true
 		}
 	} else if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		//Pf("[%v] FALSE New AppendEntry Received from [%v] Replying False ", rf.me, args.LeaderId)
-
+		// Pf("++++")
 		reply.Term = currentTerm
 		reply.Success = false
 	}
@@ -805,6 +812,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if currentState != Follower && needToBecomeFollower {
 		rf.BecomeFollower()
+		return
+	}
+
+	if reply.Success == false {
+		// Pf("reply is %v", reply.Success)
 		return
 	}
 
@@ -822,7 +834,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		//Pf("[%v] %v Appended a new entry %v now log is %v", rf.me, args.Ri, args.Entries[i], rf.log)
 	}
 
-	//Pf("[%v] %v Leader Commit index : %v, follower commit Index %v, log %v", rf.me, args.Ri, args.LeaderCommit, rf.commitIndex, rf.log)
+	// Pf("[%v] %v Leader Commit index : %v, follower commit Index %v, log %v", rf.me, args.Ri, args.LeaderCommit, rf.commitIndex, rf.log)
 	if args.LeaderCommit > rf.commitIndex {
 
 		// math.Min needs a float64 but I have int so instead using if else
@@ -832,7 +844,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.commitIndex = args.PrevLogIndex
 		}
 
-		//Pf("[%v] %v Command index is : %v, follower commit Index %v, log is %v", rf.me, args.Ri, args.PrevLogIndex, rf.commitIndex, rf.log)
+		// Pf("[%v] %v Command index is : %v, follower commit Index %v, log is %v, entries index %v", rf.me, args.Ri, args.PrevLogIndex, rf.commitIndex, rf.log, entryIndex)
 
 		if heartbeat {
 			newMsg := ApplyMsg{CommandValid: true, Command: rf.log[entryIndex].Command, CommandIndex: args.PrevLogIndex}
