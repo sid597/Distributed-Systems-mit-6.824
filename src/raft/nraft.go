@@ -138,6 +138,7 @@ func (rf *Raft) BecomeLeader() {
 	rf.NextIndex = []int{}
 	rf.MatchIndex = []int{}
 	ri := rand.Intn(5000)
+	me := rf.me
 
 	for i := 0; i < rf.totalServers; i++ {
 		rf.NextIndex = append(rf.NextIndex, len(rf.log))
@@ -145,7 +146,7 @@ func (rf *Raft) BecomeLeader() {
 	}
 	Pf("[%v] NextIndex and MatchIndex are : %v, %v", rf.me, rf.NextIndex, rf.MatchIndex)
 	rf.mu.Unlock()
-
+	Pf("[%v] %v LEADER 1st Heartbeat ", me, ri)
 	rf.Heartbeat(ri)
 
 	// TODO : Start sending heartbeats
@@ -166,6 +167,8 @@ func (rf *Raft) BecomeLeader() {
 		}
 		if timeSince > 140*time.Millisecond {
 
+			Pf("")
+			Pf("[%v] %v TIME SINCE : %v, So Sending Heartbeat ", me, ri, timeSince)
 			rf.Heartbeat(ri)
 			rf.mu.Lock()
 
@@ -294,8 +297,12 @@ func (rf *Raft) NewElection() {
 					if tv >= majorityServers {
 						rf.mu.Lock()
 						// 	Pf("[%v] total votes received >= majority ", rf.me)
+						state := rf.state
 						rf.mu.Unlock()
-						rf.BecomeLeader()
+
+						if state != Leader {
+							rf.BecomeLeader()
+						}
 						return
 					}
 
@@ -519,7 +526,7 @@ func (rf *Raft) Heartbeat(ri int) {
 
 				nextIndex := rf.NextIndex[server]
 				entries := []LogEntry{}
-				Pf("[%v] %v nextIndex : %v, log is %v", rf.me, ri, nextIndex, rf.log)
+				Pf("[%v] %v NextIndex : %v, log is %v", rf.me, ri, nextIndex, rf.log)
 				curTerm := rf.currentTerm
 
 				rf.mu.Unlock()
@@ -627,7 +634,7 @@ func (rf *Raft) SendAppendEntry(server int, withEntries []LogEntry, ri int) (boo
 
 	nextIndex := rf.NextIndex[server]
 	prevLogIndex := nextIndex - 1
-	Pf("[%v] %v  nextIndex : %v, prevLogIndex: %v, commitIndex: %v, NextIndexes: %v, log is %v", rf.me, ri, nextIndex, prevLogIndex, rf.commitIndex, rf.NextIndex, rf.log)
+	Pf("[%v] %v NextIndex : %v, prevLogIndex: %v, commitIndex: %v, NextIndexes: %v, log is %v", rf.me, ri, nextIndex, prevLogIndex, rf.commitIndex, rf.NextIndex, rf.log)
 
 	args := AppendEntriesArgs{}
 	args.Term = rf.currentTerm
@@ -643,11 +650,13 @@ func (rf *Raft) SendAppendEntry(server int, withEntries []LogEntry, ri int) (boo
 	Pf("[%v] %v SendingAppendEntries to server [%v] with arguments [%v] for Term [%v] ", rf.me, ri, server, args, args.Term)
 	Pf("[%v] %v SendingAppendEntries to server [%v] for Term: %v, with arguments {Term : %v, LeaderId : %v, PrevLogIndex : %v, PrevLogTerm : %v, Entries : %v, LeaderCommit : %v, Ri : %v, Mri: %v}, currentTerm %v", rf.me, ri, server, args.Term, args.Term, args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, args.Entries, args.LeaderCommit, args.Ri, args.Mri, rf.currentTerm)
 
+	Pf("")
 	rf.mu.Unlock()
 
 	ok := rf.SendAppendEntryRPC(server, &args, &reply)
 
 	if !ok {
+		Pf("[%v] %v Not Ok", rf.me, ri)
 		for !ok {
 			time.Sleep(10 * time.Millisecond)
 			ok = rf.SendAppendEntryRPC(server, &args, &reply)
@@ -655,6 +664,7 @@ func (rf *Raft) SendAppendEntry(server int, withEntries []LogEntry, ri int) (boo
 	}
 
 	Pf("[%v] %v Reply from server %v is %v for args %v", rf.me, ri, server, reply, args)
+	Pf("")
 	return reply.Success, reply.Term, args.Term
 
 }
@@ -663,21 +673,26 @@ func (rf *Raft) MakeItTrue(server int, ri int) {
 
 	rf.mu.Lock()
 
+	Pf("")
 	rf.NextIndex[server] -= 1
 	entries := rf.GetEntries(rf.NextIndex[server])
+	Pf("[%v] %v Sending Append entry for index: %v, with entries : %v, for server : %v ", rf.me, ri, rf.NextIndex[server], entries, server)
 
 	rf.mu.Unlock()
 
 	for {
-		success, _, _ := rf.SendAppendEntry(server, entries, ri)
+		success, term, argTerm := rf.SendAppendEntry(server, entries, ri)
+		Pf("[%v] %v REPLY from server %v, for Term : %v, with arg term : %v ", rf.me, ri, success, term, argTerm)
 		if !success {
 			rf.mu.Lock()
 
 			rf.NextIndex[server] -= 1
 			entries = rf.GetEntries(rf.NextIndex[server])
+			Pf("[%v] %v Next append Entry for server %v, for index %v, with entries : %v ", rf.me, ri, server, rf.NextIndex[server], entries)
 
 			rf.mu.Unlock()
 		} else {
+			Pf("")
 			return
 		}
 
@@ -690,16 +705,19 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 	Pf("[%v] %v  START AGREEMENT         ", rf.me, ri)
 	forIndex := len(rf.log) - 1 // Because we appended the new entry
 	Pf("[%v] %v Start Agreement for Index %v", rf.me, ri, forIndex)
+
 	rf.mu.Unlock()
 	totalAgreements := 1
+	appended := false
 	for server, _ := range rf.peers {
 		if server != rf.me {
 
 			go func(server int) {
 				rf.mu.Lock()
-				rf.NextIndex[server] -= 1
+				//rf.NextIndex[server] -= 1
 				entries := rf.GetEntries(rf.NextIndex[server])
 				me := rf.me
+				Pf("")
 				Pf("[%v] %v Next Index : %v, for server :%v, entries : %v ", rf.me, ri, rf.NextIndex[server], server, entries)
 				rf.mu.Unlock()
 
@@ -715,12 +733,14 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 					Pf("[%v] %v RPC Append by [%v] result [%v] now Total agreements [%v] needed for majority [%v] for Term : [%v]", rf.me, ri, server, success, totalAgreements, majorityServers, rf.currentTerm)
 					rf.mu.Unlock()
 
-					if ta >= majorityServers {
+					if ta >= majorityServers && !appended {
 						rf.mu.Lock()
+						appended = true
 						Pf("[%v] %v Total agreements(%v) > majority", me, ri, ta)
 						Pf("[%v] %v Commiting for %v, log is %v ", rf.me, ri, forIndex, rf.log)
 						rf.commitIndex = forIndex
-						newMsg := ApplyMsg{CommandValid: true, Command: rf.log[rf.NextIndex[server]].Command, CommandIndex: forIndex}
+						Pf("[%v] %v LEADER COMMIT INDEX : %v ", rf.me, ri, rf.commitIndex)
+						newMsg := ApplyMsg{CommandValid: true, Command: rf.log[forIndex].Command, CommandIndex: forIndex}
 						rf.mu.Unlock()
 
 						rf.applyCh <- newMsg
@@ -733,7 +753,7 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 
 						rf.mu.Lock()
 						Pf("[%v] %v Follower (%v) Term > Leader Term ", rf.me, ri, term)
-						rf.currentTerm = argTerm
+						rf.currentTerm = term
 						rf.mu.Unlock()
 
 						rf.BecomeFollower()
@@ -748,98 +768,6 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 				}
 			}(server)
 
-			//	go func(server int) {
-
-			//		reply := AppendEntriesReply{}
-			//		for !reply.Success {
-			//			time.Sleep(20 * time.Millisecond)
-			//			rf.mu.Lock()
-
-			//			nextIndex := rf.NextIndex[server]
-			//			prevLogIndex := nextIndex - 1
-			//			Pf("[%v] %v nextIndex : %v, prevLogIndex: %v, log is %v", rf.me, ri, nextIndex, prevLogIndex, rf.log)
-			//			args := AppendEntriesArgs{}
-			//			args.Term = rf.currentTerm
-			//			args.LeaderId = rf.me
-			//			//args.PrevLogIndex = prevLogIndex
-			//			args.PrevLogIndex = prevLogIndex
-			//			args.PrevLogTerm = rf.log[prevLogIndex].Term
-			//			if !heartbeat{
-			//				args.Entries = rf.GetEntries(nextIndex)
-			//			} else {
-			//				args.Entries = []LogEntry{}
-			//			}
-
-			//			args.LeaderCommit = rf.commitIndex
-			//			args.Ri = rand.Intn(5000)
-			//			args.Mri = ri
-
-			//			// args.ForIndex = forIndex
-
-			//			//nextIndex := len(rf.log)
-			//			Pf("[%v] %v log is %v, commit Index is %v", rf.me, ri, rf.log, rf.commitIndex)
-			//			Pf("[%v] %v SendingAppendEntries to server [%v] with arguments [%v] for Term [%v] ", rf.me, ri, server, args, rf.currentTerm)
-			//			Pf(" Leader %v current log is : %v", rf.me, rf.log)
-			//			rf.mu.Unlock()
-
-			//			// Send Append Entry to this server and if the RPC is unsuccessful then keep trying sending
-			//			ok := rf.SendAppendEntryRPC(server, &args, &reply)
-
-			//			if !ok {
-			//				for !ok {
-			//					time.Sleep(10 * time.Millisecond)
-			//					ok = rf.SendAppendEntryRPC(server, &args, &reply)
-			//				}
-			//			}
-			//				if reply.Success {
-			//					rf.mu.Lock()
-			//					rf.NextIndex[server] += 1
-			//					totalAgreements += 1
-			//					ta := totalAgreements
-			//					majorityServers := rf.totalServers/2 + 1
-			//					Pf("[%v] %v RPC Append by [%v] result [%v] now Total agreements [%v] needed for majority [%v] for Term : [%v]", rf.me, ri, server, reply.Success, totalAgreements, majorityServers, rf.currentTerm)
-			//					rf.mu.Unlock()
-
-			//					if ta >= majorityServers {
-			//						rf.mu.Lock()
-			//						Pf("[%v] %v Commited for %v, log is %v ", rf.me, ri, prevLogIndex+1, rf.log)
-			//						rf.commitIndex = forIndex
-
-			//						newMsg := ApplyMsg{CommandValid: true, Command: rf.log[nextIndex].Command, CommandIndex: forIndex}
-
-			//						rf.mu.Unlock()
-			//						rf.applyCh <- newMsg
-
-			//					}
-
-			//				} else {
-			//					Pf("")
-			//					Pf("")
-			//					Pf("")
-			//					Pf("[%v] %v Reply from server %v is %v for args %v", args.LeaderId, ri, server, reply, args)
-			//					Pf("")
-			//					Pf("")
-			//					Pf("")
-
-			//					rf.mu.Lock()
-			//					rplyTerm := reply.Term
-			//					rf.mu.Unlock()
-			//					if rplyTerm > args.Term {
-			//						rf.mu.Lock()
-			//						rf.currentTerm = reply.Term
-			//						rf.mu.Unlock()
-			//						rf.BecomeFollower()
-			//						return
-			//					}
-
-			//					rf.mu.Lock()
-			//					rf.NextIndex[server] -= 1
-			//					rf.mu.Unlock()
-
-			//				}
-			//		}
-
-			//	}(server)
 		}
 
 	}
