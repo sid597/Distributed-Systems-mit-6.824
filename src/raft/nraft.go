@@ -109,24 +109,16 @@ func (rf *Raft) NewFollower() {
 	rf.log = append(rf.log, firstEntry)
 	Pf("[%v] Asked to become NEW  Follower for term [%v] ", rf.me, rf.currentTerm)
 	rf.state = Follower
-	rf.mu.Unlock()
 	rf.ResetElectionAlarm()
+	rf.mu.Unlock()
 	rf.StartElectionCountdown()
 }
 
 func (rf *Raft) BecomeFollower() {
-	if rf.killed() {
-		Pf("[%v]###################### KILL CALLED Become Follower DEAD NOW  ##############################", rf.raftId)
-		return
-	}
-
-	rf.mu.Lock()
 	Pf("[%v] Asked to ____BECOME FOLLOWER____ for term [%v] ", rf.me, rf.currentTerm)
 	rf.state = Follower
-	rf.mu.Unlock()
 	rf.ResetElectionAlarm()
 }
-
 
 func (rf *Raft) BecomeLeader() {
 
@@ -145,13 +137,14 @@ func (rf *Raft) BecomeLeader() {
 		rf.NextIndex = append(rf.NextIndex, len(rf.log))
 		if i == me {
 			rf.MatchIndex = append(rf.MatchIndex, len(rf.log)-1)
+		} else {
+			rf.MatchIndex = append(rf.MatchIndex, 0)
 		}
-		rf.MatchIndex = append(rf.MatchIndex, 0)
 	}
 	Pf("[%v] NextIndex and MatchIndex are : %v, %v", rf.me, rf.NextIndex, rf.MatchIndex)
 	rf.mu.Unlock()
 	Pf("[%v] %v LEADER 1st Heartbeat ", me, ri)
-	rf.StartAgreement(true,ri)
+	rf.StartAgreement(true, ri)
 
 	// TODO : Start sending heartbeats
 	for {
@@ -174,7 +167,7 @@ func (rf *Raft) BecomeLeader() {
 
 			Pf("")
 			Pf("[%v] %v TIME SINCE : %v, So Sending Heartbeat ", me, ri, timeSince)
-			rf.StartAgreement(true,ri)
+			rf.StartAgreement(true, ri)
 			rf.mu.Lock()
 
 			rf.lastAppliedRpc = time.Now()
@@ -202,8 +195,8 @@ func (rf *Raft) BecomeCandidate() {
 // Set election time between 150-300 milliseconds
 //
 func (rf *Raft) ResetElectionAlarm() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
+	//rf.mu.Lock()
+	//defer rf.mu.Unlock()
 	rf.lastReceived = time.Now()
 	rf.electionAlarm = time.Duration(rand.Intn(200)+250) * time.Millisecond
 	Pf("[%v] Election alarm reset to : [%v] for term [%v]", rf.me, rf.electionAlarm, rf.currentTerm)
@@ -269,15 +262,16 @@ func (rf *Raft) NewElection() {
 
 	rf.votedFor = rf.me
 	me := rf.me
-
-	rf.mu.Unlock()
+	forTerm := rf.currentTerm
 
 	rf.ResetElectionAlarm()
+	rf.mu.Unlock()
+
 	totalVotes := 1 // Voted for self
 
 	for server, _ := range rf.peers {
 		if server != me {
-			go func(server int) {
+			go func(server int, forTerm int) {
 				if rf.killed() {
 					// Pf("[%v]###################### KILL CALLED REQUEST VOTE DEAD NOW  ##############################", rf.raftId)
 					return
@@ -288,44 +282,47 @@ func (rf *Raft) NewElection() {
 				currentTerm := rf.currentTerm
 
 				rf.mu.Unlock()
-				if voteGranted {
-					rf.mu.Lock()
-
-					totalVotes += 1
-					majorityServers := rf.totalServers/2 + 1
-					tv := totalVotes
-
-					Pf("[%v] vote from [%v] result [%v] now Total Votes [%v] out of [%v] for Term : [%v]", rf.me, server, voteGranted, totalVotes, majorityServers, rf.currentTerm)
-
-					rf.mu.Unlock()
-
-					if tv >= majorityServers {
+				if forTerm == currentTerm {
+					if voteGranted {
 						rf.mu.Lock()
-						// 	Pf("[%v] total votes received >= majority ", rf.me)
-						state := rf.state
+
+						totalVotes += 1
+						majorityServers := rf.totalServers/2 + 1
+						tv := totalVotes
+
+						Pf("[%v] vote from [%v] result [%v] now Total Votes [%v] out of [%v] for Term : [%v]", rf.me, server, voteGranted, totalVotes, majorityServers, rf.currentTerm)
+
 						rf.mu.Unlock()
 
-						if state != Leader {
-							rf.BecomeLeader()
+						if tv >= majorityServers {
+							rf.mu.Lock()
+							// 	Pf("[%v] total votes received >= majority ", rf.me)
+							state := rf.state
+							rf.mu.Unlock()
+
+							if state != Leader {
+								rf.BecomeLeader()
+							}
+							return
 						}
-						return
-					}
 
-				} else {
-					if serverTerm > currentTerm {
+					} else {
+						if serverTerm > currentTerm {
 
-						rf.mu.Lock()
-						Pf("[%v] VOTER Term greater than Candidate Term [%v] ", rf.me, rf.currentTerm)
-						rf.currentTerm = serverTerm
-						rf.mu.Unlock()
+							rf.mu.Lock()
+							Pf("[%v] VOTER Term greater than Candidate Term [%v] ", rf.me, rf.currentTerm)
+							rf.currentTerm = serverTerm
+							rf.BecomeFollower()
+							rf.mu.Unlock()
 
-						rf.BecomeFollower()
-						return
+							return
+						}
 					}
 				}
-			}(server)
+			}(server, forTerm)
 		}
 	}
+	return
 }
 
 //
@@ -444,22 +441,20 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 	Pf("[%v] reply to [%v]  is : %v, %v", rf.me, args.CandidateId, reply.Term, reply.VoteGranted)
 	Pf("[%v] REQUEST RPC _______END ", rf.me)
-	rf.mu.Unlock()
-
 	if res {
 		rf.ResetElectionAlarm()
 	}
+
 	if args.Term > currentTerm {
-		rf.mu.Lock()
 		Pf("[%v] args Term  [%v]  is greater than current Term : %v ", rf.me, args.Term, rf.currentTerm)
 		rf.currentTerm = args.Term
 		curState := rf.state
-		rf.mu.Unlock()
 		if curState != Follower {
 			Pf("[%v] args Term  [%v]  is greater than current Term : %v So becoming Follower", rf.me, args.Term, rf.currentTerm)
 			rf.BecomeFollower()
 		}
 	}
+	rf.mu.Unlock()
 
 }
 
@@ -516,16 +511,18 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 // the leader.
 //
 
-
 func (rf *Raft) CheckCommitIndex() {
 	Pf("")
 	Pf("")
 	Pf("")
 	Pf("[%v] Checking Commit Index, match Indexes %v", rf.me, rf.MatchIndex)
-	for _, N:= range rf.MatchIndex {
+	for _, N := range rf.MatchIndex {
 		if N > rf.commitIndex {
 			count := 0
 			for _, N0 := range rf.MatchIndex {
+				//rf.mu.Lock()
+				Pf("[%v] Log is %v, N : %v, N0 : %v", rf.me, rf.log, N, N0)
+				//rf.mu.Unlock()
 				if N0 == N && rf.log[N].Term == rf.currentTerm {
 					count += 1
 				}
@@ -543,7 +540,6 @@ func (rf *Raft) CheckCommitIndex() {
 	Pf("")
 	return
 }
-
 
 func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
@@ -572,8 +568,8 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.MatchIndex[rf.me] += 1
 		rf.lastAppliedRpc = time.Now()
 		rf.mu.Unlock()
-
 		rf.StartAgreement(false, ri)
+
 	} else {
 		isLeader = false
 	}
@@ -600,7 +596,7 @@ func (rf *Raft) GetEntries(after int) []LogEntry {
 
 }
 
-func (rf *Raft) SendAppendEntry(server int, withEntries []LogEntry, ri int) (bool, int, int, int, int) {
+func (rf *Raft) SendAppendEntry(server int, heartbeat bool, ri int) (bool, int, int, int, int, int) {
 
 	rf.mu.Lock()
 
@@ -608,12 +604,17 @@ func (rf *Raft) SendAppendEntry(server int, withEntries []LogEntry, ri int) (boo
 	prevLogIndex := nextIndex - 1
 	Pf("[%v] %v NextIndex : %v, prevLogIndex: %v, commitIndex: %v, NextIndexes: %v, log is %v", rf.me, ri, nextIndex, prevLogIndex, rf.commitIndex, rf.NextIndex, rf.log)
 
+	entries := []LogEntry{}
+	if !heartbeat {
+		entries = rf.GetEntries(rf.NextIndex[server])
+	}
+	Pf("[%v] %v Next Index : %v, for server :%v, entries : %v ", rf.me, ri, rf.NextIndex[server], server, entries)
 	args := AppendEntriesArgs{}
 	args.Term = rf.currentTerm
 	args.LeaderId = rf.me
 	args.PrevLogIndex = prevLogIndex
 	args.PrevLogTerm = rf.log[prevLogIndex].Term
-	args.Entries = withEntries
+	args.Entries = entries
 	args.LeaderCommit = rf.commitIndex
 	args.Ri = rand.Intn(5000)
 	args.Mri = ri
@@ -635,9 +636,9 @@ func (rf *Raft) SendAppendEntry(server int, withEntries []LogEntry, ri int) (boo
 		}
 	}
 
-	Pf("[%v] %v Reply from server %v is %v for args %v", rf.me, ri, server, reply, args)
+	Pf("[%v] %v Reply from server %v [%v] is %v for args %v", rf.me, ri, server, args.Mri, reply, args)
 	Pf("")
-	return reply.Success, reply.Term, args.Term, len(args.Entries), args.PrevLogIndex
+	return reply.Success, reply.Term, args.Term, len(args.Entries), args.PrevLogIndex, args.Ri
 
 }
 
@@ -653,8 +654,8 @@ func (rf *Raft) MakeItTrue(server int, ri int) {
 	rf.mu.Unlock()
 
 	for {
-		success, term, argTerm, _, _ := rf.SendAppendEntry(server, entries, ri)
-		Pf("[%v] %v REPLY from server %v, for Term : %v, with arg term : %v ", rf.me, ri, success, term, argTerm)
+		success, term, argTerm, _, _, ari := rf.SendAppendEntry(server, false, ri)
+		Pf("[%v] %v REPLY from server %v [%v], for Term : %v, with arg term : %v ", rf.me, ri, success, ari, term, argTerm)
 		if !success {
 			rf.mu.Lock()
 
@@ -678,10 +679,11 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 	forIndex := len(rf.log) - 1 // Because we appended the new entry
 	Pf("[%v] %v Start Agreement for Index %v", rf.me, ri, forIndex)
 
-	rf.mu.Unlock()
 	totalAgreements := 1
 	appended := false
 	forTerm := rf.currentTerm
+
+	rf.mu.Unlock()
 	for server, _ := range rf.peers {
 		if server != rf.me {
 
@@ -690,61 +692,60 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 
 				me := rf.me
 				curTerm := rf.currentTerm
-				entries := []LogEntry{}
-				if !heartbeat{
-					entries = rf.GetEntries(rf.NextIndex[server])
-				}
-				Pf("")
-				Pf("[%v] %v Next Index : %v, for server :%v, entries : %v ", rf.me, ri, rf.NextIndex[server], server, entries)
 
 				rf.mu.Unlock()
 
-				success, term, argTerm, entriesLen, prevIndex := rf.SendAppendEntry(server, entries, ri)
-				Pf("[%v] %v Reply from : %v, success : %v, term : %v, argTerm : %v", me, ri, server, success, term, argTerm)
+				success, term, argTerm, entriesLen, prevIndex, ari := rf.SendAppendEntry(server, heartbeat, ri)
+				Pf("[%v] %v Reply from : %v, success : %v, term : %v, argTerm : %v, curTerm : %v", me, ri, server, success, term, argTerm, curTerm)
 
-				if success && forTerm == curTerm {
-					rf.mu.Lock()
-					if !heartbeat{
-						rf.NextIndex[server] += 1
-					}
-					rf.MatchIndex[server] = entriesLen + prevIndex
-					totalAgreements += 1
-					Pf("[%v] %v MATCH INDEX is %v, NEXT INDEX is %v ", rf.me, ri, rf.MatchIndex, rf.NextIndex)
-					ta := totalAgreements
-					majorityServers := rf.totalServers/2 + 1
-					Pf("[%v] %v RPC Append by [%v] result [%v] now Total agreements [%v] needed for majority [%v] for Term : [%v]", rf.me, ri, server, success, totalAgreements, majorityServers, rf.currentTerm)
-					ap := appended
-					rf.CheckCommitIndex()
-					rf.mu.Unlock()
-
-					if ta >= majorityServers && !ap {
+				//rf.mu.Lock()
+				//defer rf.mu.Unlock()
+				if forTerm == curTerm {
+					if success {
 						rf.mu.Lock()
-						appended = true
-						Pf("[%v] %v Total agreements(%v) > majority", me, ri, ta)
-						Pf("[%v] %v Commiting for %v, log is %v ", rf.me, ri, forIndex, rf.log)
-						rf.commitIndex = forIndex
-						Pf("[%v] %v LEADER COMMIT INDEX : %v ", rf.me, ri, rf.commitIndex)
+						if !heartbeat {
+							rf.NextIndex[server] += 1
+						}
+						rf.MatchIndex[server] = entriesLen + prevIndex
+						totalAgreements += 1
+						Pf("[%v] %v SUCCESS FROM SERVER %v [%v]", rf.me, ri, server, ari)
+						Pf("[%v] %v MATCH INDEX is %v, NEXT INDEX is %v ", rf.me, ri, rf.MatchIndex, rf.NextIndex)
+						ta := totalAgreements
+						majorityServers := rf.totalServers/2 + 1
+						Pf("[%v] %v RPC Append by [%v] result [%v] now Total agreements [%v] needed for majority [%v] for Term : [%v]", rf.me, ri, server, success, totalAgreements, majorityServers, rf.currentTerm)
+						ap := appended
+						rf.CheckCommitIndex()
 						rf.mu.Unlock()
 
-						return
-					}
-				} else {
-					Pf("[%v] %v Result from server (%v) is FALSE", rf.me, ri, server)
-					if term > argTerm {
+						if ta >= majorityServers && !ap {
+							rf.mu.Lock()
+							appended = true
+							Pf("[%v] %v Total agreements(%v) > majority", me, ri, ta)
+							Pf("[%v] %v Commiting for %v, log is %v ", rf.me, ri, forIndex, rf.log)
+							rf.commitIndex = forIndex
+							Pf("[%v] %v LEADER COMMIT INDEX : %v ", rf.me, ri, rf.commitIndex)
+							rf.mu.Unlock()
 
-						rf.mu.Lock()
-						Pf("[%v] %v Follower (%v) Term > Leader Term ", rf.me, ri, term)
-						rf.currentTerm = term
-						rf.mu.Unlock()
-
-						rf.BecomeFollower()
-						return
-
+							return
+						}
 					} else {
+						Pf("[%v] %v %v Result from server %v  is FALSE", rf.me, ri, ari, server)
+						if term > argTerm {
 
-						Pf("[%v] %v Failed due to term not matching for the index", rf.me, ri)
-						rf.MakeItTrue(server, ri)
-						return
+							rf.mu.Lock()
+							Pf("[%v] %v %v Follower (%v) Term > Leader Term ", rf.me, ri, ari, term)
+							rf.currentTerm = term
+							rf.BecomeFollower()
+							rf.mu.Unlock()
+
+							return
+
+						} else {
+
+							Pf("[%v] %v  %vFailed due to term not matching for the index", rf.me, ri, ari)
+							rf.MakeItTrue(server, ri)
+							return
+						}
 					}
 				}
 			}(server, forTerm)
@@ -752,6 +753,7 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 		}
 
 	}
+	return
 
 }
 
@@ -789,7 +791,8 @@ func (rf *Raft) ApplyCommit() {
 		if rf.commitIndex > rf.lastApplied {
 			rf.lastApplied += 1
 			Pf("[%v] APPLY COMMIT", rf.me)
-			Pf("[%v] APPLYING MESSAGE for log %v, lastApplied : %v, apply command : %v", rf.me, rf.log, rf.lastApplied, rf.log[rf.lastApplied].Command)
+			//Pf("[%v] APPLYING MESSAGE for log %v, lastApplied : %v, apply command : %v", rf.me, rf.log, rf.lastApplied, rf.log[rf.lastApplied].Command)
+			Pf("[%v] APPLYING MESSAGE for log %v, lastApplied : %v", rf.me, rf.log, rf.lastApplied )
 
 			newMsg := ApplyMsg{CommandValid: true, Command: rf.log[rf.lastApplied].Command, CommandIndex: rf.lastApplied}
 			rf.applyCh <- newMsg
@@ -858,55 +861,61 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 	}
 
-	rf.mu.Unlock()
+	if needToBecomeFollower{
+		rf.currentTerm = args.Term
+	}
 
 	if currentState == Candidate || needToBecomeFollower {
 		Pf("[%v] %v %v CURRENT STATE %v, Need To Become Follower: %v", rf.me, args.Mri, args.Ri, currentState, needToBecomeFollower)
 		rf.BecomeFollower()
 	}
 
-	if reply.Success == false {
-		return
-	}
+	//if reply.Success == false {
+	//	return
+	//}
 
-	rf.mu.Lock()
 	// Delete the conflicting entries
-	if logLen >= entryIndex && !heartbeat {
-		Pf("[%v] %v %v LogLen >= entryIndex: %v, heartbeat: %v", rf.me, args.Mri, args.Ri, logLen >= entryIndex, !heartbeat)
-		Pf("[%v] %v %v Log is : [%v], entryIndex is %v, entryToAppend %v, commit Index is  %v ", rf.me, args.Mri, args.Ri, rf.log, entryIndex, entryToAppend, rf.commitIndex)
-		if rf.log[entryIndex].Term != entryToAppend.Term {
-			Pf("[%v] %v %v Deleting Conflicting Entries", rf.me, args.Mri, args.Ri)
-			rf.log = rf.log[:args.PrevLogIndex + 1]
-			Pf("[%v] %v  %v Modified log is %v", rf.me, args.Mri, args.Ri, rf.log)
+	if reply.Success == true{
+
+		//while 
+		if logLen >= entryIndex && !heartbeat {
+			Pf("[%v] %v %v LogLen >= entryIndex: %v, heartbeat: %v", rf.me, args.Mri, args.Ri, logLen >= entryIndex, !heartbeat)
+			Pf("[%v] %v %v Log is : [%v], entryIndex is %v, entryToAppend %v, commit Index is  %v ", rf.me, args.Mri, args.Ri, rf.log, entryIndex, entryToAppend, rf.commitIndex)
+			if rf.log[entryIndex].Term != entryToAppend.Term {
+				Pf("[%v] %v %v Deleting Conflicting Entries", rf.me, args.Mri, args.Ri)
+				rf.log = rf.log[:args.PrevLogIndex+1]
+				Pf("[%v] %v  %v Modified log is %v", rf.me, args.Mri, args.Ri, rf.log)
+			} else {
+				args.Entries = args.Entries[1:]
+				Pf("[%v] %v %v NEW ENTRIES : %v", rf.me, args.Mri, args.Ri, args.Entries)
+			}
 		}
-	}
 
-	for _, entry := range args.Entries {
-		rf.log = append(rf.log, entry)
-		Pf("[%v] %v %v Appended a new entry %v now log is %v", rf.me, args.Mri, args.Ri, entry, rf.log)
-	}
-
-	if args.LeaderCommit > rf.commitIndex {
-		Pf("[%v] %v %v Leader commit Index > commit Index: %v, %v ", rf.me, args.Mri, args.Ri, args.LeaderCommit, rf.commitIndex)
-
-		// math.Min needs a float64 but I have int so instead using if else
-		if args.LeaderCommit >= args.PrevLogIndex+1 {
-			rf.commitIndex = args.LeaderCommit
-		} else {
-			rf.commitIndex = args.PrevLogIndex
+		for _, entry := range args.Entries {
+			rf.log = append(rf.log, entry)
+			Pf("[%v] %v %v Appended a new entry %v now log is %v", rf.me, args.Mri, args.Ri, entry, rf.log)
 		}
-		Pf("[%v] %v %v UPDATED COMMIT INDEX, Leader Commit index : %v, follower commit Index %v, log %v", rf.me, args.Mri, args.Ri, args.LeaderCommit, rf.commitIndex, rf.log)
+
+		if args.LeaderCommit > rf.commitIndex {
+			Pf("[%v] %v %v Leader commit Index > commit Index: %v, %v ", rf.me, args.Mri, args.Ri, args.LeaderCommit, rf.commitIndex)
+
+			// math.Min needs a float64 but I have int so instead using if else
+			if args.LeaderCommit >= args.PrevLogIndex+1 {
+				rf.commitIndex = args.LeaderCommit
+			} else {
+				rf.commitIndex = args.PrevLogIndex
+			}
+			Pf("[%v] %v %v UPDATED COMMIT INDEX, Leader Commit index : %v, follower commit Index %v, log %v", rf.me, args.Mri, args.Ri, args.LeaderCommit, rf.commitIndex, rf.log)
+		}
 	}
 
 	reply.Term = currentTerm
-	reply.Success = true
-	rf.mu.Unlock()
 
-	rf.mu.Lock()
-	Pf("[%v] %v %v After Appending entries from [%v] log is : [%v] and reply is : %v", rf.me, args.Mri, args.Ri, args.LeaderId, rf.log, reply)
+	Pf("[%v] %v %v After Appending entries from [%v] log is : [%v] and reply is : %v, commit Index : %v", rf.me, args.Mri, args.Ri, args.LeaderId, rf.log, reply, rf.commitIndex)
 	Pf("[%v] %v %v     END APPEND ENTRIES       ", rf.me, args.Mri, args.Ri)
-	rf.mu.Unlock()
 	rf.ResetElectionAlarm()
+	rf.mu.Unlock()
+	return
 }
 
 //
