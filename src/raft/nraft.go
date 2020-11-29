@@ -939,11 +939,28 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 					  Leader Request : PI: 3, PT: 2, entries: [(2,107) ]
 		*/
 		Pf("[%v] %v %v Conflicting entries ? %v, %v ", rf.me, args.Mri, args.Ri, args.PrevLogIndex, rf.log)
-		if len(rf.log)  > args.PrevLogIndex {
-			//if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
+		if len(rf.log) - 1  > args.PrevLogIndex {
+			if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 				Pf("[%v] %v %v log entry %v at index %v, does not match prevLogTerm %v", rf.me, args.Mri, args.Ri, rf.log[args.PrevLogIndex].Term, args.PrevLogIndex, args.PrevLogTerm)
 				rf.log = rf.log[:args.PrevLogIndex + 1]
-			//} 
+			} else {
+				// If previous log entry matches but some other entry in the leader entries may be conflicting
+				for indx, entry := range args.Entries{
+					nextIndex := indx + args.PrevLogIndex + 1
+					Pf("[%v] %v %v entry: %v, index: %v, nextIndex: %v", rf.me, args.Mri, args.Ri, entry, indx, nextIndex)
+					if rf.log[nextIndex].Term != entry.Term {
+						rf.log = rf.log[:nextIndex]
+						Pf("[%v] %v %v New log %v", rf.me, args.Mri, args.Ri, rf.log)
+						args.Entries = args.Entries[indx:]
+						Pf("[%v] %v %v New entries %v", rf.me, args.Mri, args.Ri, args.Entries)
+					} else {
+						// If this entry is already in log then remove the entry from leader entries
+						args.Entries = args.Entries[:indx]
+						Pf("[%v] %v %v New entries %v", rf.me, args.Mri, args.Ri, args.Entries)
+					}
+					
+				}
+			}
 			
 
 		}
