@@ -137,8 +137,6 @@ func (rf *Raft) BecomeLeader() {
 	ri := rand.Intn(5000)
 	me := rf.me
 
-
-
 	for i := 0; i < rf.totalServers; i++ {
 		rf.NextIndex = append(rf.NextIndex, len(rf.log))
 		if i == me {
@@ -164,16 +162,13 @@ func (rf *Raft) BecomeLeader() {
 		ri = rand.Intn(5000)
 		rf.mu.Unlock()
 
-		
-
-
 		if curState != Leader {
 			rf.mu.Lock()
 			Pf("[%v] ===============NOT LEADER ANYMORE==========%v=%v===", rf.me, rf.state, rf.currentTerm)
 			rf.mu.Unlock()
 			return
 		}
-		if timeSince > 140 * time.Millisecond {
+		if timeSince > 140*time.Millisecond {
 			// for server,_ := range rf.peers{
 			// 	if server != rf.me{
 			// 		rf.mu.Lock()
@@ -625,7 +620,6 @@ func (rf *Raft) GetNextEntry(server int) []LogEntry {
 func (rf *Raft) SendAppendEntry(server int, heartbeat bool, forFailedServer bool, ri int) (bool, int, int, int, int, int) {
 
 	rf.mu.Lock()
-	
 
 	nextIndex := rf.NextIndex[server]
 	prevLogIndex := nextIndex - 1
@@ -658,8 +652,6 @@ func (rf *Raft) SendAppendEntry(server int, heartbeat bool, forFailedServer bool
 	state := rf.state
 	rf.mu.Unlock()
 
-	
-	
 	ok := rf.SendAppendEntryRPC(server, &args, &reply)
 
 	//if !ok {
@@ -712,7 +704,7 @@ func (rf *Raft) MakeItTrue(server int, ri int) {
 			Pf("")
 			rf.mu.Lock()
 
-			if rf.MatchIndex[server] < prevIndex + entriesLen{
+			if rf.MatchIndex[server] < prevIndex+entriesLen {
 				rf.MatchIndex[server] = prevIndex + entriesLen
 				rf.NextIndex[server] = rf.MatchIndex[server] + 1
 			}
@@ -732,17 +724,17 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 	defer rf.mu0.Unlock()
 
 	rf.mu.Lock()
-	if !heartbeat{
-	Pf("-----------------------------------------------------------------")
-	Pf("-----------------------------------------------------------------")
-	Pf("-----------------------------------------------------------------")
-	Pf("-----------------------------------------------------------------")
-	Pf("-----------------------------------------------------------------")
-	Pf("-----------------------------------------------------------------")
-	Pf("-----------------------------------------------------------------")
-	Pf("-----------------------------------------------------------------")
-	Pf("-----------------------------------------------------------------")
-	Pf("-----------------------------------------------------------------")
+	if !heartbeat {
+		Pf("-----------------------------------------------------------------")
+		Pf("-----------------------------------------------------------------")
+		Pf("-----------------------------------------------------------------")
+		Pf("-----------------------------------------------------------------")
+		Pf("-----------------------------------------------------------------")
+		Pf("-----------------------------------------------------------------")
+		Pf("-----------------------------------------------------------------")
+		Pf("-----------------------------------------------------------------")
+		Pf("-----------------------------------------------------------------")
+		Pf("-----------------------------------------------------------------")
 	}
 
 	Pf("[%v] %v  START AGREEMENT         ", rf.me, ri)
@@ -778,7 +770,7 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 
 					if success {
 						rf.mu.Lock()
-						if rf.MatchIndex[server] < prevIndex + entriesLen{
+						if rf.MatchIndex[server] < prevIndex+entriesLen {
 							rf.MatchIndex[server] = entriesLen + prevIndex
 							rf.NextIndex[server] = rf.MatchIndex[server] + 1
 						}
@@ -907,19 +899,18 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	currentTerm := rf.currentTerm
 	reply.Term = currentTerm
 	Pf("[%v] %v %v args Term : %v,args Entries : %v, current term : %v, log : %v, prevLogIndex : %v ", rf.me, args.Mri, args.Ri, args.Term, args.Entries, rf.currentTerm, rf.log, args.PrevLogIndex)
-	if args.Term < rf.currentTerm{
+	if args.Term < rf.currentTerm {
 		return
-	} 
+	}
 
-
-	if len(rf.log) - 1 < args.PrevLogIndex{
+	if len(rf.log)-1 < args.PrevLogIndex {
 		return
-	} else{
+	} else {
 		if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 			return
 		}
 	}
-	
+
 	if args.Term > rf.currentTerm {
 		rf.currentTerm = args.Term
 		rf.BecomeFollower()
@@ -939,41 +930,61 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 					  Leader Request : PI: 3, PT: 2, entries: [(2,107) ]
 		*/
 		Pf("[%v] %v %v Conflicting entries ? %v, %v ", rf.me, args.Mri, args.Ri, args.PrevLogIndex, rf.log)
-		if len(rf.log) - 1  > args.PrevLogIndex {
+		if len(rf.log)-1 > args.PrevLogIndex {
 			if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 				Pf("[%v] %v %v log entry %v at index %v, does not match prevLogTerm %v", rf.me, args.Mri, args.Ri, rf.log[args.PrevLogIndex].Term, args.PrevLogIndex, args.PrevLogTerm)
-				rf.log = rf.log[:args.PrevLogIndex + 1]
+				rf.log = rf.log[:args.PrevLogIndex+1]
 			} else {
 				// If previous log entry matches but some other entry in the leader entries may be conflicting
-				for indx, entry := range args.Entries{
+				//after := 0
+				for indx, entry := range args.Entries {
 					nextIndex := indx + args.PrevLogIndex + 1
 					Pf("[%v] %v %v entry: %v, index: %v, nextIndex: %v", rf.me, args.Mri, args.Ri, entry, indx, nextIndex)
-					if rf.log[nextIndex].Term != entry.Term {
-						rf.log = rf.log[:nextIndex]
-						Pf("[%v] %v %v New log %v", rf.me, args.Mri, args.Ri, rf.log)
-						args.Entries = args.Entries[indx:]
-						Pf("[%v] %v %v New entries %v", rf.me, args.Mri, args.Ri, args.Entries)
+					if len(rf.log)-1 >= nextIndex {
+						if rf.log[nextIndex].Term != entry.Term {
+							rf.log = rf.log[:nextIndex]
+							Pf("[%v] %v %v New log %v", rf.me, args.Mri, args.Ri, rf.log)
+							args.Entries = args.Entries[indx:]
+							Pf("[%v] %v %v New entries %v", rf.me, args.Mri, args.Ri, args.Entries)
+							break
+						}
 					} else {
+						break
 						// If this entry is already in log then remove the entry from leader entries
-						args.Entries = args.Entries[:indx]
-						Pf("[%v] %v %v New entries %v", rf.me, args.Mri, args.Ri, args.Entries)
+						//args.Entries = append(args.Entries[:indx] , args.Entries[indx + 1 :]...)
+						//Pf("[%v] %v %v New entries %v", rf.me, args.Mri, args.Ri, args.Entries)
+						//after = indx
 					}
-					
+
 				}
+				//args.Entries = args.Entries[after:]
 			}
-			
 
 		}
 
 		// append any new entries not already in log
-		for i := 0; i < len(args.Entries); i++ { 
-			rf.log = append(rf.log, args.Entries[i])
-			Pf("[%v] %v %v Appended new entries %v ", rf.me, args.Mri, args.Ri, rf.log)
+
+		for i := 0; i < len(args.Entries); i++ {
+			if len(rf.log)-1 < i+args.PrevLogIndex+1 {
+				rf.log = append(rf.log, args.Entries[i])
+				Pf("[%v] %v %v Appended new entries %v ", rf.me, args.Mri, args.Ri, rf.log)
+				// }
+				//	else if len(rf.log) == i + args.PrevLogIndex + 1{
+				//		if rf.log[i+args.PrevLogIndex+1] != args.Entries[i] {
+				//			rf.log = append(rf.log, args.Entries[i])
+				//		}
+				//
+			} else {
+				Pf("[%v] %v %v log len %v, is less than %v", rf.me, args.Mri, args.Ri, len(rf.log), i+args.PrevLogIndex+1)
+				if rf.log[i+args.PrevLogIndex+1] != args.Entries[i] {
+					rf.log = append(rf.log, args.Entries[i])
+				}
+			}
 		}
 	}
 
 	// if leader commit > commitIndex ; commitIndex = min (leader commit, index of last new entry)
-	Pf("[%v] %v %v Leader commit > commit Index : %v ", rf.me, args.Mri, args.Ri,args.LeaderCommit > rf.commitIndex )
+	Pf("[%v] %v %v Leader commit > commit Index : %v ", rf.me, args.Mri, args.Ri, args.LeaderCommit > rf.commitIndex)
 
 	if args.LeaderCommit > rf.commitIndex {
 		if args.LeaderCommit < len(rf.log) {
@@ -986,7 +997,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	reply.Success = true
 	rf.ResetElectionAlarm()
 	return
-
 
 }
 
@@ -1159,6 +1169,7 @@ func (rf *Raft) Kill() {
 	Pf("###################### KILL CALLED ##############################")
 	Pf("###################### KILL CALLED ##############################")
 	Pf("###################### KILL CALLED ##############################")
+	Pf("[%v] LOG : %v", rf.me, rf.log)
 }
 
 func (rf *Raft) killed() bool {
