@@ -169,16 +169,6 @@ func (rf *Raft) BecomeLeader() {
 			return
 		}
 		if timeSince > 140*time.Millisecond {
-			// for server,_ := range rf.peers{
-			// 	if server != rf.me{
-			// 		rf.mu.Lock()
-			// 		behind := rf.NextIndex[server] < rf.NextIndex[rf.me]
-			// 		rf.mu.Unlock()
-			// 		if behind{
-			// 			rf.SendAppendEntry(server, false, false, ri)
-			// 		}
-			// 	}
-			// }
 			Pf("")
 			Pf("[%v] %v TIME SINCE : %v, So Sending Heartbeat ", me, ri, timeSince)
 			rf.StartAgreement(true, ri)
@@ -627,11 +617,7 @@ func (rf *Raft) SendAppendEntry(server int, heartbeat bool, forFailedServer bool
 
 	entries := []LogEntry{}
 	if rf.NextIndex[server] < rf.NextIndex[rf.me] {
-		//if forFailedServer {
 		entries = rf.GetEntries(rf.NextIndex[server], server, ri)
-		//} else {
-		//	entries = rf.GetNextEntry(server)
-		//}
 	}
 	Pf("[%v] %v Next Index : %v, for server :%v, entries : %v ", rf.me, ri, rf.NextIndex[server], server, entries)
 	args := AppendEntriesArgs{}
@@ -724,18 +710,6 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 	defer rf.mu0.Unlock()
 
 	rf.mu.Lock()
-	if !heartbeat {
-		Pf("-----------------------------------------------------------------")
-		Pf("-----------------------------------------------------------------")
-		Pf("-----------------------------------------------------------------")
-		Pf("-----------------------------------------------------------------")
-		Pf("-----------------------------------------------------------------")
-		Pf("-----------------------------------------------------------------")
-		Pf("-----------------------------------------------------------------")
-		Pf("-----------------------------------------------------------------")
-		Pf("-----------------------------------------------------------------")
-		Pf("-----------------------------------------------------------------")
-	}
 
 	Pf("[%v] %v  START AGREEMENT         ", rf.me, ri)
 	forIndex := len(rf.log) - 1 // Because we appended the new entry
@@ -814,8 +788,6 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 
 	}
 
-	//for !needToReturn {
-	//for !( returned == ((rf.totalServers - 1) / 2 )) {
 	for {
 		time.Sleep(20 * time.Millisecond)
 		rf.mu.Lock()
@@ -936,7 +908,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				rf.log = rf.log[:args.PrevLogIndex+1]
 			} else {
 				// If previous log entry matches but some other entry in the leader entries may be conflicting
-				//after := 0
 				for indx, entry := range args.Entries {
 					nextIndex := indx + args.PrevLogIndex + 1
 					Pf("[%v] %v %v entry: %v, index: %v, nextIndex: %v", rf.me, args.Mri, args.Ri, entry, indx, nextIndex)
@@ -950,14 +921,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 						}
 					} else {
 						break
-						// If this entry is already in log then remove the entry from leader entries
-						//args.Entries = append(args.Entries[:indx] , args.Entries[indx + 1 :]...)
-						//Pf("[%v] %v %v New entries %v", rf.me, args.Mri, args.Ri, args.Entries)
-						//after = indx
 					}
 
 				}
-				//args.Entries = args.Entries[after:]
 			}
 
 		}
@@ -968,12 +934,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			if len(rf.log)-1 < i+args.PrevLogIndex+1 {
 				rf.log = append(rf.log, args.Entries[i])
 				Pf("[%v] %v %v Appended new entries %v ", rf.me, args.Mri, args.Ri, rf.log)
-				// }
-				//	else if len(rf.log) == i + args.PrevLogIndex + 1{
-				//		if rf.log[i+args.PrevLogIndex+1] != args.Entries[i] {
-				//			rf.log = append(rf.log, args.Entries[i])
-				//		}
-				//
 			} else {
 				Pf("[%v] %v %v log len %v, is less than %v", rf.me, args.Mri, args.Ri, len(rf.log), i+args.PrevLogIndex+1)
 				if rf.log[i+args.PrevLogIndex+1] != args.Entries[i] {
