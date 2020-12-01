@@ -8,17 +8,21 @@ package raft
 // test with the original before submitting.
 //
 
-import "../labrpc"
-import "log"
-import "sync"
-import "testing"
-import "runtime"
-import "math/rand"
-import crand "crypto/rand"
-import "math/big"
-import "encoding/base64"
-import "time"
-import "fmt"
+import (
+	"log"
+	"math/rand"
+	"runtime"
+	"sync"
+	"testing"
+
+	"../labrpc"
+
+	crand "crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"math/big"
+	"time"
+)
 
 func randstring(n int) string {
 	b := make([]byte, 2*n)
@@ -168,12 +172,20 @@ func (cfg *config) start1(i int) {
 	applyCh := make(chan ApplyMsg)
 	go func() {
 		for m := range applyCh {
+			// Pf("")
+			// Pf("")
+			// Pf("+++++++++++++==Apply Msg received From %v, msg is %v", i, m)
+			// Pf("")
+			// Pf("")
 			err_msg := ""
 			if m.CommandValid == false {
 				// ignore other types of ApplyMsg
 			} else {
 				v := m.Command
+
 				cfg.mu.Lock()
+				// Pf("----%v, %v, %v", i, m, cfg.logs)
+				// Pf("[%v] command received : %v", i, v)
 				for j := 0; j < len(cfg.logs); j++ {
 					if old, oldok := cfg.logs[j][m.CommandIndex]; oldok && old != v {
 						// some server has already committed a different value for this entry!
@@ -186,12 +198,14 @@ func (cfg *config) start1(i int) {
 				if m.CommandIndex > cfg.maxIndex {
 					cfg.maxIndex = m.CommandIndex
 				}
+				Pf("[%v] LOG FOR ALL SERVERS IS : %v", i, cfg.logs)
 				cfg.mu.Unlock()
 
 				if m.CommandIndex > 1 && prevok == false {
 					err_msg = fmt.Sprintf("server %v apply out of order %v", i, m.CommandIndex)
 				}
 			}
+			Pf("")
 
 			if err_msg != "" {
 				log.Fatalf("apply error: %v\n", err_msg)
@@ -364,15 +378,20 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 	count := 0
 	var cmd interface{} = nil
 	for i := 0; i < len(cfg.rafts); i++ {
+
 		if cfg.applyErr[i] != "" {
 			cfg.t.Fatal(cfg.applyErr[i])
 		}
 
 		cfg.mu.Lock()
+		// Pf("[%v] %v, %v", i, cfg.logs[i], cfg.logs)
+
 		cmd1, ok := cfg.logs[i][index]
+		// Pf("[%v] %v, %v", i, cmd1, ok)
 		cfg.mu.Unlock()
 
 		if ok {
+
 			if count > 0 && cmd != cmd1 {
 				cfg.t.Fatalf("committed values do not match: index %v, %v, %v\n",
 					index, cmd, cmd1)
@@ -381,6 +400,7 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 			cmd = cmd1
 		}
 	}
+	// Pf("[%v] %v,%v, %v", index, count, cmd, cfg.logs)
 	return count, cmd
 }
 
@@ -428,9 +448,12 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 // if retry==false, calls Start() only once, in order
 // to simplify the early Lab 2B tests.
 func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
+	//Pf("--")
+	////Pf("++++++++ INSIDE ONE +++ cmd is :%v, expected Servers : %v, retry :%v", cmd, expectedServers, retry)
 	t0 := time.Now()
 	starts := 0
 	for time.Since(t0).Seconds() < 10 {
+		//Pf("++Check if we got a leader ")
 		// try all the servers, maybe one is the leader.
 		index := -1
 		for si := 0; si < cfg.n; si++ {
@@ -442,6 +465,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			}
 			cfg.mu.Unlock()
 			if rf != nil {
+				//Pf("++ rf is not nill so starting new command ")
 				index1, _, ok := rf.Start(cmd)
 				if ok {
 					index = index1
@@ -451,28 +475,35 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 		}
 
 		if index != -1 {
+			//Pf("++Index is %v Somebody claimed to be leader and cmd is %v", index, cmd)
+
 			// somebody claimed to be the leader and to have
 			// submitted our command; wait a while for agreement.
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
+				// Pf("[%v] nd is %v for cmd1 %v", index, nd, cmd1)
+				// Pf("%v Servers think entry %v is commited", nd, cmd1)
+
 				if nd > 0 && nd >= expectedServers {
+					//Pf("%v++ Servers think entry %v is commited", nd, cmd1)
 					// committed
 					if cmd1 == cmd {
 						// and it was the command we submitted.
+						//Pf("--")
 						return index
 					}
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
 			if retry == false {
-				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
+				cfg.t.Fatalf("++ one(%v) failed to reach agreement", cmd)
 			}
 		} else {
 			time.Sleep(50 * time.Millisecond)
 		}
 	}
-	cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
+	cfg.t.Fatalf("++ one(%v) failed to reach agreement", cmd)
 	return -1
 }
 
