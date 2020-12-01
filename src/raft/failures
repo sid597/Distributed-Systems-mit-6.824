@@ -23,4 +23,22 @@ Lab 2A
 15. What does Resseting election alarm mean ?
 16. Locking conditions but then calling a thread while holding the lock therby creating Deadlock
 17. Checking for majority for a candidate /
-18. 
+18. Seperately locking conditions in the same block  i.e I have an if-else block and I lock them seperately
+    and not locking the whole crotocal section
+
+
+// 2B
+
+Concurrent requests coming how to send them in order ?
+Inconsistent result due to heartbeats, I was not sending heartbeats when there are no appendentries
+Failure due to not applying commited entries to log, this was due to commiting entries in heartbeat. But this failed if after commiting something
+Leader failed hence no heartbeat would be sent and nothing would be commited  
+
+Locked return statement so that server failed to resond when that condition hit 
+
+Starting agreement which are not atomic
+Disconnected server do not release locks hence causing infinite log and stuck in that state
+
+
+
+
