@@ -52,15 +52,13 @@ type ApplyMsg struct {
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
 	mu0       sync.Mutex          // Lock to protect shared access to this peer's state
-	mu1       sync.Mutex          // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
 	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
 
 	// Your data here (2A, 2B, 2C).
-	// Look at the paper's Figure 2 for a description of what
-	// state a Raft server must maintain.
+	// Look at the paper's Figure 2 for a description of what state a Raft server must maintain.
 
 	// Lab 2A
 
@@ -101,12 +99,13 @@ const (
 )
 
 func (rf *Raft) NewFollower() {
+	rf.mu.Lock()
 	if rf.killed() {
 		Pf("[%v]###################### KILL CALLED New Follower DEAD NOW  ##############################", rf.raftId)
+		rf.mu.Unlock()
 		return
 	}
 
-	rf.mu.Lock()
 	firstEntry := LogEntry{Term: 0, Command: 0}
 	rf.log = append(rf.log, firstEntry)
 	Pf("[%v] Asked to become NEW  Follower for term [%v] ", rf.me, rf.currentTerm)
@@ -128,7 +127,7 @@ func (rf *Raft) BecomeLeader() {
 
 	rf.mu.Lock()
 	if rf.state != Leader {
-		Pf("[%v] Asked to b____BECOME LEADER______ for term [%v] ", rf.me, rf.currentTerm)
+		Pf("[%v] Asked to ____BECOME LEADER______ for term [%v] ", rf.me, rf.currentTerm)
 		rf.state = Leader
 	}
 	rf.lastAppliedRpc = time.Now()
@@ -150,7 +149,6 @@ func (rf *Raft) BecomeLeader() {
 	Pf("[%v] %v LEADER 1st Heartbeat ", me, ri)
 	rf.StartAgreement(true, ri)
 
-	// TODO : Start sending heartbeats
 
 	for {
 		time.Sleep(20 * time.Millisecond)
@@ -160,21 +158,19 @@ func (rf *Raft) BecomeLeader() {
 		timeSince := time.Now().Sub(rf.lastAppliedRpc)
 		curState := rf.state
 		ri = rand.Intn(5000)
-		rf.mu.Unlock()
 
 		if curState != Leader {
-			rf.mu.Lock()
-			Pf("[%v] ===============NOT LEADER ANYMORE==========%v=%v===", rf.me, rf.state, rf.currentTerm)
+			Pf("[%v] =============== NOT LEADER ANYMORE ========== %v = %v ===", rf.me, rf.state, rf.currentTerm)
 			rf.mu.Unlock()
 			return
 		}
-		if timeSince > 140*time.Millisecond {
+		if timeSince > 140 * time.Millisecond {
 			Pf("")
 			Pf("[%v] %v TIME SINCE : %v, So Sending Heartbeat ", me, ri, timeSince)
-			rf.StartAgreement(true, ri)
-			rf.mu.Lock()
-
 			rf.lastAppliedRpc = time.Now()
+			rf.mu.Unlock()
+			rf.StartAgreement(true, ri)
+		} else {
 			rf.mu.Unlock()
 		}
 	}
@@ -183,7 +179,6 @@ func (rf *Raft) BecomeLeader() {
 func (rf *Raft) BecomeCandidate() {
 
 	rf.mu.Lock()
-	//rf.lastReceived = time.Now()
 
 	Pf("[%v] Asked to _____BECOME CANDIDATE_____ for term [%v] ", rf.me, rf.currentTerm+1)
 	rf.state = Candidate
@@ -199,8 +194,6 @@ func (rf *Raft) BecomeCandidate() {
 // Set election time between 150-300 milliseconds
 //
 func (rf *Raft) ResetElectionAlarm() {
-	//rf.mu.Lock()
-	//defer rf.mu.Unlock()
 	rf.lastReceived = time.Now()
 	rf.electionAlarm = time.Duration(rand.Intn(200)+250) * time.Millisecond
 	Pf("[%v] Election alarm reset to : [%v] for term [%v]", rf.me, rf.electionAlarm, rf.currentTerm)
@@ -227,17 +220,14 @@ func (rf *Raft) StartElectionCountdown() {
 		state := rf.state
 		lastRpcTime := rf.lastReceived
 		electionAlarm := rf.electionAlarm
-		// me := rf.me
-		// term := rf.currentTerm
-		rf.mu.Unlock()
 
 		if state == Leader {
 
 			// Somehow stop this thread / set election alarm infinite
-			rf.mu.Lock()
 			rf.electionAlarm = 20 * time.Second
 			rf.mu.Unlock()
 		} else {
+			rf.mu.Unlock()
 			timeElapsed := time.Now().Sub(lastRpcTime)
 			if timeElapsed > electionAlarm {
 				//Pf("[%v] timeout after [%v] was expected [%v] current state [%v] for term [%v]", me, timeElapsed, electionAlarm, state, term)
@@ -260,6 +250,7 @@ func (rf *Raft) StartElectionCountdown() {
 func (rf *Raft) NewElection() {
 
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	rf.currentTerm += 1
 	Pf("[%v] New election for term [%v] ", rf.me, rf.currentTerm)
@@ -269,7 +260,6 @@ func (rf *Raft) NewElection() {
 	forTerm := rf.currentTerm
 
 	rf.ResetElectionAlarm()
-	rf.mu.Unlock()
 
 	totalVotes := 1 // Voted for self
 
@@ -285,10 +275,8 @@ func (rf *Raft) NewElection() {
 				rf.mu.Lock()
 				currentTerm := rf.currentTerm
 
-				rf.mu.Unlock()
 				if forTerm == currentTerm {
 					if voteGranted {
-						rf.mu.Lock()
 
 						totalVotes += 1
 						majorityServers := rf.totalServers/2 + 1
@@ -296,10 +284,8 @@ func (rf *Raft) NewElection() {
 
 						Pf("[%v] vote from [%v] result [%v] now Total Votes [%v] out of [%v] for Term : [%v]", rf.me, server, voteGranted, totalVotes, majorityServers, rf.currentTerm)
 
-						rf.mu.Unlock()
 
 						if tv >= majorityServers {
-							rf.mu.Lock()
 							// 	Pf("[%v] total votes received >= majority ", rf.me)
 							state := rf.state
 							rf.mu.Unlock()
@@ -313,7 +299,6 @@ func (rf *Raft) NewElection() {
 					} else {
 						if serverTerm > currentTerm {
 
-							rf.mu.Lock()
 							Pf("[%v] VOTER Term greater than Candidate Term [%v] ", rf.me, rf.currentTerm)
 							rf.currentTerm = serverTerm
 							rf.BecomeFollower()
@@ -323,6 +308,7 @@ func (rf *Raft) NewElection() {
 						}
 					}
 				}
+				rf.mu.Unlock()
 			}(server, forTerm)
 		}
 	}
@@ -368,12 +354,8 @@ func (rf *Raft) GetVote(server int) (bool, int) {
 	reply := RequestVoteReply{}
 	Pf("[%v] Get vote from [%v] for term [%v] ", rf.me, server, rf.currentTerm)
 
-	//me := rf.me
-	//currentTerm := rf.currentTerm
-
 	rf.mu.Unlock()
 
-	//var ok bool
 	ok := rf.sendRequestVote(server, &args, &reply)
 	for !ok {
 		time.Sleep(10 * time.Millisecond)
@@ -386,13 +368,13 @@ func (rf *Raft) GetLastLogData() (int, int) {
 	index := len(rf.log) - 1
 	term := rf.log[index].Term
 	return index, term
-
 }
+
 func (rf *Raft) IsMoreUptoDate(args *RequestVoteArgs) bool {
 	lastLogIndex, lastLogTerm := rf.GetLastLogData()
 	// If the logs have last entry with different terms then the log with later term is
 	// more upto date.
-	// If logs end with the same term then whichever log us longer is more upto date
+	// If logs end with the same term then whichever log is longer is more upto date
 	Pf("[%v] lastLogTerm : %v, args LastlogTerm %v; lastLogIndex %v, args lastLogIndex %v", rf.me, lastLogTerm, args.LastLogTerm, lastLogIndex, args.LastLogIndex)
 	if args.LastLogTerm == lastLogTerm {
 		return args.LastLogIndex >= lastLogIndex
@@ -411,55 +393,38 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// THIS NEEDS TO BE DONE ONLY IF VOTE IS GRANTED
 
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	Pf("")
 	Pf("")
 
-	// rf.lastReceived = time.Now()
-	//isFollower := (rf.state == Follower)
-	currentTerm := rf.currentTerm
 	isMoreUptoDate := rf.IsMoreUptoDate(args)
 
 	Pf("[%v] REQUEST RPC more up-to-date ? %v ", rf.me, isMoreUptoDate)
-	Pf("[%v] Vote requested by [%v] for term [%v] ", rf.me, args.CandidateId, args.Term)
-	Pf("[%v] args Term [%v] current Term [%v]  ", rf.me, args.Term, rf.currentTerm)
-	Pf("[%v] Voted For [%v] ", rf.me, rf.votedFor)
+	Pf("[%v] Vote requested by [%v], for term [%v], current Term [%v], Voted For [%v] ", rf.me, args.CandidateId, args.Term, rf.currentTerm, rf.votedFor) 
 
-	res := true
+	// Only vote for the candidate if for this term server did not grant vote to someone else or the candidate itself 
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
 
 		reply.VoteGranted = false
-		res = false
 
 	} else if args.Term == rf.currentTerm {
 		if (rf.votedFor == rf.totalServers+1 || rf.votedFor == args.CandidateId) && isMoreUptoDate {
 			reply.VoteGranted = true
 			rf.votedFor = args.CandidateId
+			rf.ResetElectionAlarm()
 		}
 	} else {
 		if isMoreUptoDate {
 			reply.VoteGranted = true
 			rf.votedFor = args.CandidateId
+			rf.ResetElectionAlarm()
 		}
-	}
-
-	Pf("[%v] reply to [%v]  is : %v, %v", rf.me, args.CandidateId, reply.Term, reply.VoteGranted)
-	Pf("[%v] REQUEST RPC _______END ", rf.me)
-	if res {
-		rf.ResetElectionAlarm()
-	}
-
-	if args.Term > currentTerm {
-		Pf("[%v] args Term  [%v]  is greater than current Term : %v ", rf.me, args.Term, rf.currentTerm)
 		rf.currentTerm = args.Term
-		curState := rf.state
-		if curState != Follower {
-			Pf("[%v] args Term  [%v]  is greater than current Term : %v So becoming Follower", rf.me, args.Term, rf.currentTerm)
-			rf.BecomeFollower()
-		}
+		rf.BecomeFollower()
 	}
-	rf.mu.Unlock()
-
+	Pf("[%v] reply to [%v]  is : %v, %v", rf.me, args.CandidateId, reply.Term, reply.VoteGranted)
 }
 
 //
@@ -516,6 +481,9 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 //
 
 func (rf *Raft) CheckCommitIndex() {
+	// This is related to leader state
+	// If for some N > commitIndex, and a majority of MatchIndex[server] >= N && log[N] == currentTerm, set commit index to N
+	// This is the way a leader increases its commit index, the reasoning for this is  // TODO
 	Pf("")
 	Pf("")
 	Pf("")
@@ -524,10 +492,8 @@ func (rf *Raft) CheckCommitIndex() {
 		if N > rf.commitIndex {
 			count := 0
 			for _, N0 := range rf.MatchIndex {
-				//rf.mu.Lock()
 				Pf("[%v] Log is %v, N : %v, N0 : %v", rf.me, rf.log, N, N0)
-				//rf.mu.Unlock()
-				if N0 == N && rf.log[N].Term == rf.currentTerm {
+				if N0 >= N && rf.log[N].Term == rf.currentTerm {
 					count += 1
 				}
 			}
@@ -553,14 +519,9 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	// Your code here (2B).
 	rf.mu.Lock()
 	ri := rand.Intn(3000) + 5000
-	curState := rf.state
 	Pf("[%v] %v       START        ", rf.me, ri)
 	Pf("[%v] %v -------- command received : %v state : %v, term : %v , log : %v", rf.me, ri, command, rf.state, rf.currentTerm, rf.log)
-
-	rf.mu.Unlock()
-
-	if curState == Leader {
-		rf.mu.Lock()
+	if rf.state == Leader {
 		// Index at which need to append entry
 		index = rf.NextIndex[rf.me]
 		term = rf.currentTerm
@@ -577,19 +538,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 	} else {
 		isLeader = false
+		rf.mu.Unlock()
 	}
 
 	Pf("[%v] %v START command received, result : %v, %v, %v", rf.me, ri, index, term, isLeader)
 
 	return index, term, isLeader
-}
-
-func (rf *Raft) AppendEntryToLog(command interface{}) {
-	//rf.mu.Lock()
-	newEntry := LogEntry{Term: rf.currentTerm, Command: command}
-	rf.log = append(rf.log, newEntry)
-	Pf("[%v] NEW entry appended to log current log is : %v", rf.me, rf.log)
-	//rf.mu.Unlock()
 }
 
 func (rf *Raft) GetEntries(after int, forServer int, ri int) []LogEntry {
@@ -603,9 +557,6 @@ func (rf *Raft) GetEntries(after int, forServer int, ri int) []LogEntry {
 
 }
 
-func (rf *Raft) GetNextEntry(server int) []LogEntry {
-	return []LogEntry{rf.log[rf.NextIndex[server]]}
-}
 
 func (rf *Raft) SendAppendEntry(server int, heartbeat bool, forFailedServer bool, ri int) (bool, int, int, int, int, int) {
 
@@ -640,8 +591,6 @@ func (rf *Raft) SendAppendEntry(server int, heartbeat bool, forFailedServer bool
 
 	ok := rf.SendAppendEntryRPC(server, &args, &reply)
 
-	//if !ok {
-	//Pf("[%v] %v Not Ok", rf.me, ri)
 	for !ok {
 		time.Sleep(100 * time.Millisecond)
 		rf.mu.Lock()
@@ -656,7 +605,6 @@ func (rf *Raft) SendAppendEntry(server int, heartbeat bool, forFailedServer bool
 
 		ok = rf.SendAppendEntryRPC(server, &args, &reply)
 	}
-	//}
 
 	Pf("[%v] %v %v Reply from server %v [%v] is %v for args %v", rf.me, state, ri, server, args.Mri, reply, args)
 	Pf("")
@@ -678,8 +626,8 @@ func (rf *Raft) MakeItTrue(server int, ri int) {
 	for {
 		success, term, argTerm, entriesLen, prevIndex, ari := rf.SendAppendEntry(server, false, true, ri)
 		Pf("[%v] %v REPLY from server %v [%v], for Term : %v, with arg term : %v ", rf.me, ri, success, ari, term, argTerm)
+		rf.mu.Lock()
 		if !success {
-			rf.mu.Lock()
 
 			rf.NextIndex[server] -= 1
 			entries = rf.GetEntries(rf.NextIndex[server], server, ri)
@@ -688,9 +636,8 @@ func (rf *Raft) MakeItTrue(server int, ri int) {
 			rf.mu.Unlock()
 		} else {
 			Pf("")
-			rf.mu.Lock()
 
-			if rf.MatchIndex[server] < prevIndex+entriesLen {
+			if rf.MatchIndex[server] < prevIndex + entriesLen {
 				rf.MatchIndex[server] = prevIndex + entriesLen
 				rf.NextIndex[server] = rf.MatchIndex[server] + 1
 			}
@@ -701,7 +648,6 @@ func (rf *Raft) MakeItTrue(server int, ri int) {
 			rf.mu.Unlock()
 			return
 		}
-
 	}
 }
 
@@ -717,13 +663,13 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 
 	forTerm := rf.currentTerm
 	returned := 0
-	curState := rf.state
-	rf.mu.Unlock()
 
-	if curState != Leader {
+	if rf.state != Leader {
+		rf.mu.Unlock()
 		return
 	}
 
+	rf.mu.Unlock()
 	for server, _ := range rf.peers {
 		if server != rf.me {
 
@@ -805,7 +751,6 @@ func (rf *Raft) StartAgreement(heartbeat bool, ri int) {
 	Pf("")
 	Pf("")
 	Pf("")
-	//rf.mu0.Unlock()
 }
 
 //
@@ -834,7 +779,6 @@ func (rf *Raft) ApplyCommit() {
 		time.Sleep(35 * time.Millisecond)
 
 		rf.mu.Lock()
-		//Pf("[%v] APPLY COMMIT LAST APPLIED %v, COMMIT INDEX %v", rf.me, rf.lastApplied, rf.commitIndex)
 
 		if rf.killed() {
 			return
@@ -842,7 +786,6 @@ func (rf *Raft) ApplyCommit() {
 		if rf.commitIndex > rf.lastApplied {
 			rf.lastApplied += 1
 			Pf("[%v] APPLY COMMIT ; %v, commit Index is : %v ", rf.me, rf.lastApplied, rf.commitIndex)
-			//Pf("[%v] APPLYING MESSAGE for log %v, lastApplied : %v, apply command : %v", rf.me, rf.log, rf.lastApplied, rf.log[rf.lastApplied].Command)
 			Pf("[%v] APPLYING MESSAGE for log %v, lastApplied : %v", rf.me, rf.log, rf.lastApplied)
 
 			newMsg := ApplyMsg{CommandValid: true, Command: rf.log[rf.lastApplied].Command, CommandIndex: rf.lastApplied}
@@ -911,12 +854,10 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 				for indx, entry := range args.Entries {
 					nextIndex := indx + args.PrevLogIndex + 1
 					Pf("[%v] %v %v entry: %v, index: %v, nextIndex: %v", rf.me, args.Mri, args.Ri, entry, indx, nextIndex)
-					if len(rf.log)-1 >= nextIndex {
+					if len(rf.log) - 1 >= nextIndex {
 						if rf.log[nextIndex].Term != entry.Term {
 							rf.log = rf.log[:nextIndex]
 							Pf("[%v] %v %v New log %v", rf.me, args.Mri, args.Ri, rf.log)
-							args.Entries = args.Entries[indx:]
-							Pf("[%v] %v %v New entries %v", rf.me, args.Mri, args.Ri, args.Entries)
 							break
 						}
 					} else {
