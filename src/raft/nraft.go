@@ -136,12 +136,9 @@ func (rf *Raft) BecomeLeader() {
 	Pf("[%v] %v LEADER 1st Heartbeat ", me, ri)
 	rf.StartAgreement(ri)
 
-	for {
-		if rf.killed() {
-			Pf("[%v]###################### KILL CALLED LEADER DEAD  NOW  ##############################", rf.raftId)
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	for !rf.killed() {
+
+		time.Sleep(11 * time.Millisecond)
 		//rf.CheckCo1mitIndex()
 
 		rf.mu.Lock()
@@ -154,7 +151,7 @@ func (rf *Raft) BecomeLeader() {
 			rf.mu.Unlock()
 			return
 		}
-		if timeSince > 60*time.Millisecond {
+		if timeSince > 100*time.Millisecond {
 			Pf("")
 			Pf("[%v] %v TIME SINCE : %v, So Sending Heartbeat ", me, ri, timeSince)
 			////.Printf("[%v] %v TIME SINCE : %v, So Sending Heartbeat \n", me, ri, timeSince)
@@ -182,7 +179,7 @@ func (rf *Raft) BecomeCandidate() {
 ////////////////////////////////////////////////////////////////////////////////
 
 //
-// Set election time between 150-300 milliseconds
+// Set election time between 250-500 milliseconds
 //
 func (rf *Raft) ResetElectionAlarm() {
 	rf.lastReceived = time.Now()
@@ -199,15 +196,14 @@ func (rf *Raft) ResetElectionAlarm() {
 
 func (rf *Raft) StartElectionCountdown() {
 
-	for {
-		if rf.killed() {
-			Pf("[%v]###################### KILL CALLED Start Election Countdown DEAD NOW  ##############################", rf.raftId)
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	for !rf.killed() {
+
+		time.Sleep(13 * time.Millisecond)
 
 		rf.mu.Lock()
 
+		// timeSince := time.Now().Sub(rf.lastAppliedRpc)
+		// Pf("[%v]  Time since %v", rf.me, timeSince)
 		if rf.state == Leader {
 
 			// Somehow stop this thread / set election alarm infinite
@@ -455,9 +451,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 func (rf *Raft) CheckCommitIndex() {
 	// This is related to leader state
 	// If for some N > commitIndex, and a majority of MatchIndex[server] >= N && log[N] == currentTerm, set commit index to N
-	// This is the way a leader increases its commit index, the reasoning for this is  // TODO
+	// This is the way a leader increases its commit index, the reasoning for this is to stop the Figure 8 case in paper
 
 	Pf("[%v] Checking Commit Index, match Indexes %v", rf.me, rf.MatchIndex)
+	//defer rf.ApplyCommit()
 	for _, N := range rf.MatchIndex {
 		if N > rf.commitIndex {
 			count := 0
@@ -594,25 +591,34 @@ type AppendEntriesArgs struct {
 }
 
 func (rf *Raft) ApplyCommit() {
-	for {
-		time.Sleep(5 * time.Millisecond)
+	for !rf.killed() {
+		time.Sleep(17 * time.Millisecond)
 
-		rf.mu.Lock()
 
-		if rf.killed() {
-			rf.mu.Unlock()
-			return
-		}
-		if rf.commitIndex > rf.lastApplied {
-			rf.lastApplied += 1
-			Pf("[%v] APPLY COMMIT  last Applied:  %v, commit Index is : %v ", rf.me, rf.lastApplied, rf.commitIndex)
-			Pf("[%v] APPLYING MESSAGE , lastApplied : %v, log Len %v, for log %v", rf.me, rf.lastApplied, len(rf.log), rf.log)
+		// timeSince := time.Now().Sub(rf.lastAppliedRpc)
+		//Pf("[%v]  Time since %v", rf.me, timeSince)
+		applyEntries := []LogEntry{}
+		fromIndex := rf.lastApplied
+		func () {
+			rf.mu.Lock()
+			defer rf.mu.Unlock()
 
-			newMsg := ApplyMsg{CommandValid: true, Command: rf.log[rf.lastApplied].Command, CommandIndex: rf.lastApplied}
+			for rf.commitIndex > rf.lastApplied {
+
+				Pf("[%v] APPLY COMMIT  last Applied:  %v, commit Index is : %v ", rf.me, rf.lastApplied, rf.commitIndex)
+				Pf("[%v] APPLYING MESSAGE , lastApplied : %v, log Len %v, for log %v", rf.me, rf.lastApplied, len(rf.log), rf.log)
+				applyEntries = rf.log[rf.lastApplied+1 : rf.commitIndex+1]
+				fromIndex = rf.lastApplied
+				rf.lastApplied = rf.commitIndex
+
+			}
+		}()
+
+		for i, entry := range applyEntries {
+			newMsg := ApplyMsg{CommandValid: true, Command: entry.Command, CommandIndex: fromIndex + i + 1}
 			rf.applyCh <- newMsg
 			Pf("[%v] ----------Commited for index %v, entry %v ", rf.me, rf.lastApplied, rf.log[rf.lastApplied])
 		}
-		rf.mu.Unlock()
 	}
 }
 
@@ -733,6 +739,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		} else {
 			rf.commitIndex = len(rf.log)
 		}
+		//rf.ApplyCommit()
 	}
 
 	reply.Success = true
