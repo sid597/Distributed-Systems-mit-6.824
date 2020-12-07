@@ -1,0 +1,78 @@
+=== RUN   TestInitialElection2A
+Test (2A): initial election ...
+  ... Passed --   3.0  3   54   15780    0
+--- PASS: TestInitialElection2A (3.04s)
+=== RUN   TestReElection2A
+Test (2A): election after network failure ...
+  ... Passed --   4.5  3  124   26437    0
+--- PASS: TestReElection2A (4.55s)
+=== RUN   TestBasicAgree2B
+Test (2B): basic agreement ...
+  ... Passed --   1.2  3   18    5022    3
+--- PASS: TestBasicAgree2B (1.17s)
+=== RUN   TestRPCBytes2B
+Test (2B): RPC byte count ...
+  ... Passed --   2.8  3   48  114838   11
+--- PASS: TestRPCBytes2B (2.84s)
+=== RUN   TestFailAgree2B
+Test (2B): agreement despite follower disconnection ...
+  ... Passed --   6.5  3  120   32835    8
+--- PASS: TestFailAgree2B (6.51s)
+=== RUN   TestFailNoAgree2B
+Test (2B): no agreement if too many followers disconnect ...
+  ... Passed --   3.8  5  196   41591    3
+--- PASS: TestFailNoAgree2B (3.79s)
+=== RUN   TestConcurrentStarts2B
+Test (2B): concurrent Start()s ...
+  ... Passed --   0.8  3   10    2906    6
+--- PASS: TestConcurrentStarts2B (0.78s)
+=== RUN   TestRejoin2B
+Test (2B): rejoin of partitioned leader ...
+  ... Passed --   6.8  3  174   45604    4
+--- PASS: TestRejoin2B (6.76s)
+=== RUN   TestBackup2B
+Test (2B): leader backs up quickly over incorrect follower logs ...
+ disconnected 3, 4, 0Submit requests from 0 to 50
+Disconnect 1, 2Reconnected, 3 4 0Submit requests from 50 to 100
+Disconnct, 4 Submit requests from 100 to 150
+Disconnect 0Disconnect 1Disconnect 2Disconnect 3Disconnect 4Reconnected, 1 2 4Now everyone
+Reconnect 0Reconnect 1Reconnect 2Reconnect 3Reconnect 4  ... Passed --  30.0  5 2284 1724957  103
+--- PASS: TestBackup2B (30.02s)
+=== RUN   TestCount2B
+Test (2B): RPC counts aren't too high ...
+  ... Passed --   2.4  3   40   12124   12
+--- PASS: TestCount2B (2.36s)
+=== RUN   TestPersist12C
+Test (2C): basic persistence ...
+  ... Passed --   4.3  3   78   21493    6
+--- PASS: TestPersist12C (4.33s)
+=== RUN   TestPersist22C
+Test (2C): more persistence ...
+  ... Passed --  19.5  5  972  226504   16
+--- PASS: TestPersist22C (19.52s)
+=== RUN   TestPersist32C
+Test (2C): partitioned leader and one follower crash, leader restarts ...
+  ... Passed --   2.7  3   40    9926    4
+--- PASS: TestPersist32C (2.65s)
+=== RUN   TestFigure82C
+Test (2C): Figure 8 ...
+  ... Passed --  36.9  5 1040  227901   25
+--- PASS: TestFigure82C (36.89s)
+=== RUN   TestUnreliableAgree2C
+Test (2C): unreliable agreement ...
+  ... Passed --  13.8  5  464  143433  256
+--- PASS: TestUnreliableAgree2C (13.77s)
+=== RUN   TestFigure8Unreliable2C
+Test (2C): Figure 8 (unreliable) ...
+Set long reodering
+  ... Passed --  36.3  5 2196 3849859  685
+--- PASS: TestFigure8Unreliable2C (36.29s)
+=== RUN   TestReliableChurn2C
+Test (2C): churn ...
+  ... Passed --  16.3  5  488  263702  159
+--- PASS: TestReliableChurn2C (16.31s)
+=== RUN   TestUnreliableChurn2C
+Test (2C): unreliable churn ...
+  ... Passed --  16.3  5  532  178779  117
+--- PASS: TestUnreliableChurn2C (16.29s)
+PASS
