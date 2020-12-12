@@ -1,28 +1,31 @@
 package kvraft
 
 import (
-	"../labgob"
-	"../labrpc"
 	"log"
-	"../raft"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"../labgob"
+	"../labrpc"
+	"../raft"
 )
 
-const Debug = 0
+const Debug = 1
 
-func DPrintf(format string, a ...interface{}) (n int, err error) {
+func Pf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
 		log.Printf(format, a...)
 	}
 	return
 }
 
-
 type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
+	Key   string
+	Value string
 }
 
 type KVServer struct {
@@ -37,13 +40,28 @@ type KVServer struct {
 	// Your definitions here.
 }
 
-
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// Your code here.
+	Pf("[%v] Got a Get request : %v", kv.me, args)
 }
+
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// Your code here.
+	index, term, isLeader := kv.rf.Start(Op{args.Key, args.Value})
+	
+	if !isLeader {
+		reply.Err = "Not Leader"
+		return 
+	} else {
+		Pf("[%v] Got a PutAppend request : key :%v, value: %v, op : %v, clrkId: %v, requestId: %v", kv.me, args.Key, args.Value, args.Op, args.ClerkId, args.RequestId)
+		Pf("[%v] index : %v, term : %v, isLeader: %v", kv.me, index, term, isLeader)
+		reply.Err ="Leader"
+		Pf("[%v] Reply is %v", kv.me, reply)
+		time.Sleep(3*time.Second)
+	}
+	
+	return
 }
 
 //
