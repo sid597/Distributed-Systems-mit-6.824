@@ -39,6 +39,9 @@ Locked return statement so that server failed to resond when that condition hit
 Starting agreement which are not atomic
 Disconnected server do not release locks hence causing infinite log and stuck in that state
 
+// 2C
+testFigure8Unreliable is sometimes failing, from what I could get from logs its due to  not be able to apply all the logs in time
 
+to check if this assumption is correct I will increase the time for test
 
 
