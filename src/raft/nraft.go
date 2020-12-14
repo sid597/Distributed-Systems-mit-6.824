@@ -18,20 +18,17 @@ package raft
 //
 
 import (
+	"bytes"
+	// "fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"bytes"
-	//"//"
-
 	"../labgob"
 	"../labrpc"
 )
 
-// import "bytes"
-// import "../labgob"
 
 //
 // as each Raft peer becomes aware that successive log entries are
@@ -48,6 +45,7 @@ type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
 	CommandIndex int
+	IsLeader bool
 }
 
 //
@@ -304,10 +302,6 @@ func (rf *Raft) NewElection() {
 	return
 }
 
-//
-// example RequestVote RPC arguments structure.
-// field names must start with capital letters!
-//
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
 
@@ -323,9 +317,6 @@ type RequestVoteArgs struct {
 	Rnd int
 }
 
-//
-// example RequestVote RPC reply structure.
-// field names must start with capital letters!
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
@@ -386,9 +377,6 @@ func (rf *Raft) IsMoreUptoDate(args *RequestVoteArgs) bool {
 	}
 }
 
-//
-// example RequestVote RPC handler.
-//
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 
@@ -569,10 +557,6 @@ func (rf *Raft) StartAgreement(ri int) {
 	return
 }
 
-//
-// example AppendEntries RPC arguments structure.
-// field names must start with capital letters!
-//
 type AppendEntriesArgs struct {
 	// Your data here (2A, 2B).
 
@@ -594,12 +578,12 @@ func (rf *Raft) ApplyCommit() {
 	for !rf.killed() {
 		time.Sleep(17 * time.Millisecond)
 
-
-		// timeSince := time.Now().Sub(rf.lastAppliedRpc)
-		//Pf("[%v]  Time since %v", rf.me, timeSince)
 		applyEntries := []LogEntry{}
+		rf.mu.Lock()
 		fromIndex := rf.lastApplied
-		func () {
+		leader := rf.state == Leader
+		rf.mu.Unlock()
+		func() {
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 
@@ -607,6 +591,7 @@ func (rf *Raft) ApplyCommit() {
 
 				Pf("[%v] APPLY COMMIT  last Applied:  %v, commit Index is : %v ", rf.me, rf.lastApplied, rf.commitIndex)
 				Pf("[%v] APPLYING MESSAGE , lastApplied : %v, log Len %v, for log %v", rf.me, rf.lastApplied, len(rf.log), rf.log)
+				// fmt.Printf("[%v] APPLYING MESSAGE , lastApplied : %v, log Len %v, for log %v \n", rf.me, rf.lastApplied, len(rf.log), rf.log)
 				applyEntries = rf.log[rf.lastApplied+1 : rf.commitIndex+1]
 				fromIndex = rf.lastApplied
 				rf.lastApplied = rf.commitIndex
@@ -615,16 +600,12 @@ func (rf *Raft) ApplyCommit() {
 		}()
 
 		for i, entry := range applyEntries {
-			newMsg := ApplyMsg{CommandValid: true, Command: entry.Command, CommandIndex: fromIndex + i + 1}
+			newMsg := ApplyMsg{CommandValid: true, Command: entry.Command, CommandIndex: fromIndex + i + 1, IsLeader: leader}
 			rf.applyCh <- newMsg
-			Pf("[%v] ----------Commited for index %v, entry %v ", rf.me, rf.lastApplied, rf.log[rf.lastApplied])
 		}
 	}
 }
 
-//
-// example AppendEntries RPC reply structure.
-// field names must start with capital letters!
 //
 type AppendEntriesReply struct {
 	// Your data here (2A).
@@ -729,6 +710,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	}
 	//}
 	Pf("[%v] %v %v New log len %v, is %v ", rf.me, args.Mri, args.Ri, len(rf.log), rf.log)
+	//fmt.Printf("[%v] %v %v New log len %v, is %v \n ", rf.me, args.Mri, args.Ri, len(rf.log), rf.log)
 
 	Pf("[%v] %v %v Leader commit > commit Index : %v ", rf.me, args.Mri, args.Ri, args.LeaderCommit > rf.commitIndex)
 
@@ -748,35 +730,6 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 }
 
-//
-// example code to send a AppendEntries RPC to a server.
-// server is the index of the target server in rf.peers[].
-// expects RPC arguments in args.
-// fills in *reply with RPC reply, so caller should
-// pass &reply.
-// the types of the args and reply passed to Call() must be
-// the same as the types of the arguments declared in the
-// handler function (including whether they are pointers).
-//
-// The labrpc package simulates a lossy network, in which servers
-// may be unreachable, and in which requests and replies may be lost.
-// Call() sends a request and waits for a reply. If a reply arrives
-// within a timeout interval, Call() returns true; otherwise
-// Call() returns false. Thus Call() may not return for a while.
-// A false return can be caused by a dead server, a live server that
-// can't be reached, a lost request, or a lost reply.
-//
-// Call() is guaranteed to return (perhaps after a delay) *except* if the
-// handler function on the server side does not return.  Thus there
-// is no need to implement your own timeouts around Call().
-//
-// look at the comments in ../labrpc/labrpc.go for more details.
-//
-// if you're having trouble getting RPC to work, check that you've
-// capitalized all field names in structs passed over RPC, and
-// that the caller passes the address of the reply struct with &, not
-// the struct itself.
-//
 func (rf *Raft) SendAppendEntryRPC(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 
@@ -876,8 +829,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 // Lab 2B - 2C
 ////////////////////////////////////////////////////////////////////////////////
 
-// return currentTerm and whether this server
-// believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {
 
 	var term int
