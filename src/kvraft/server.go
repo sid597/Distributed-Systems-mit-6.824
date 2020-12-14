@@ -4,7 +4,8 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
-	"time"
+
+	// "time"
 
 	"../labgob"
 	"../labrpc"
@@ -26,6 +27,7 @@ type Op struct {
 	// otherwise RPC will break.
 	Key   string
 	Value string
+	Type string
 }
 
 type KVServer struct {
@@ -38,30 +40,54 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	resCh chan raft.ApplyMsg
+	db    map[string]string
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
-	Pf("[%v] Got a Get request : %v", kv.me, args)
+
+	index, _, isLeader := kv.rf.Start(Op{args.Key, "","Get"})
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	if !isLeader {
+		Pf("[%v] Not Leader", kv.me)
+		reply.Err = "Not Leader"
+		return
+	} else {
+		Pf("[%v] Get request with args %v", kv.me, args)
+		result := <-kv.resCh
+		Pf("[%v] result is %v", kv.me, result)
+		if result.CommandIndex == index {
+			reply.Err = "Leader"
+			reply.Value = kv.db[args.Key]
+			Pf("[%v] Get replying %v", kv.me, reply)
+		}
+	}
 }
 
-
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
-	index, term, isLeader := kv.rf.Start(Op{args.Key, args.Value})
-	
+	opType := "Append"
+	if args.Op == "Put" {
+		opType = "Put"
+	}
+	index, _, isLeader := kv.rf.Start(Op{args.Key, args.Value, opType})
+
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 	if !isLeader {
 		reply.Err = "Not Leader"
-		return 
+		return
 	} else {
-		Pf("[%v] Got a PutAppend request : key :%v, value: %v, op : %v, clrkId: %v, requestId: %v", kv.me, args.Key, args.Value, args.Op, args.ClerkId, args.RequestId)
-		Pf("[%v] index : %v, term : %v, isLeader: %v", kv.me, index, term, isLeader)
-		reply.Err ="Leader"
-		Pf("[%v] Reply is %v", kv.me, reply)
-		time.Sleep(3*time.Second)
+		Pf("[%v] PutApend request with args %v", kv.me, args)
+		result := <-kv.resCh
+		if result.CommandIndex == index {
+			reply.Err = "Leader"
+			Pf("[%v] Result is %v, index is %v, reply %v", kv.me, result, index, reply)
+			return
+		}
 	}
-	
-	return
+
 }
 
 //
@@ -83,6 +109,29 @@ func (kv *KVServer) Kill() {
 func (kv *KVServer) killed() bool {
 	z := atomic.LoadInt32(&kv.dead)
 	return z == 1
+}
+
+func (kv *KVServer) Receive() {
+	Pf("Receiving")
+	for x := range kv.applyCh {
+		if x.IsLeader {
+			kv.resCh <- x
+		}
+
+		kv.mu.Lock()
+		key := x.Command.(Op).Key
+		value := x.Command.(Op).Value
+		opType := x.Command.(Op).Type
+		kv.mu.Unlock()
+
+		if opType == "Put" {
+			kv.db[key] = value
+		} else if opType == "Append" {
+			kv.db[key] += value
+		}
+		Pf("[%v] DB IS %v", kv.me, kv.db)
+
+	}
 }
 
 //
@@ -111,9 +160,12 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 
 	kv.applyCh = make(chan raft.ApplyMsg)
+	kv.resCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
+	kv.db = make(map[string]string)
+	go kv.Receive()
 
 	return kv
 }

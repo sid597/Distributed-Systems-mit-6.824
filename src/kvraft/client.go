@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"math/big"
 
-	"time"
 
 	"../labrpc"
 )
@@ -86,17 +85,13 @@ func (ck *Clerk) Get(key string) string {
 	args := GetArgs{key, ck.clerkId, ck.requestId}
 	reply := GetReply{}
 	ck.requestId++
-	ok := ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
-
-	if ok {
-		for reply.Err != "" {
-			ok = ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
-		}
-		if reply.Value != "" {
-			return reply.Value
-		}
+	ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
+	for reply.Err == "Not Leader" {
+		ck.leader = (ck.leader + 1) % len(ck.servers)
+		ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
 	}
-	return ""
+	Pf("[ Returning %v", reply)
+	return reply.Value
 }
 
 //
@@ -113,21 +108,12 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	args := PutAppendArgs{key, value, op, ck.clerkId, ck.requestId}
 	reply := PutAppendReply{}
 	ck.requestId++
-	ok := ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
-	if ok {
-		Pf("[%v] Reply is %v, for server %v", ck.clerkId, &reply, ck.leader)
-		for reply.Err == "Not Leader" {
-
-			ck.leader = (ck.leader + 1) % len(ck.servers)
-			time.Sleep(500 * time.Millisecond)
-			ok = ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
-
-			//Pf("[%v] Reply is %v, for server %v", ck.clerkId, &reply, ck.leader)
-			if reply.Err == "Leader" {
-				break
-			}
-		}
+	ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
+	for reply.Err == "Not Leader" {
+		ck.leader = (ck.leader + 1) % len(ck.servers)
+		ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
 	}
+	Pf("[%v] Reply is %v, for server %v", ck.clerkId, &reply, ck.leader)
 }
 
 func (ck *Clerk) Put(key string, value string) {
