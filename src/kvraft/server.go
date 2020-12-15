@@ -4,6 +4,7 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	// "fmt"
 
 	// "time"
 
@@ -47,21 +48,23 @@ type KVServer struct {
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 	index, _, isLeader := kv.rf.Start(Op{args.Key, "","Get"})
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
 
 	if !isLeader {
 		Pf("[%v] Not Leader", kv.me)
 		reply.Err = "Not Leader"
 		return
 	} else {
-		Pf("[%v] Get request with args %v", kv.me, args)
+	// fmt.Printf("GET Request id is %v \n", args.RequestId)
+		Pf("[%v] GET request, Key: %v, RId : %v, for index %v", kv.me, args.Key, args.RequestId, index)
 		result := <-kv.resCh
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
 		Pf("[%v] result is %v", kv.me, result)
 		if result.CommandIndex == index {
 			reply.Err = "Leader"
 			reply.Value = kv.db[args.Key]
-			Pf("[%v] Get replying %v", kv.me, reply)
+			Pf("[%v] Get replying %v, for index %v, with result %v", kv.me, reply, index, result)
+		Pf("[%v] DB IS %v", kv.me, kv.db)
 		}
 	}
 }
@@ -73,17 +76,19 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	}
 	index, _, isLeader := kv.rf.Start(Op{args.Key, args.Value, opType})
 
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
 	if !isLeader {
 		reply.Err = "Not Leader"
 		return
 	} else {
-		Pf("[%v] PutApend request with args %v", kv.me, args)
+	// fmt.Printf("PA Request id is %v \n", args.RequestId)
+		Pf("[%v] %v PutAppend request, Key: %v, Value : %v, Op : %v, RId : %v, for index %v, isLeader %v", kv.me, args.ClerkId, args.Key, args.Value, args.Op, args.RequestId, index, isLeader)
 		result := <-kv.resCh
+		kv.mu.Lock()
+		defer kv.mu.Unlock()
 		if result.CommandIndex == index {
 			reply.Err = "Leader"
 			Pf("[%v] Result is %v, index is %v, reply %v", kv.me, result, index, reply)
+			Pf("[%v] DB IS %v", kv.me, kv.db)
 			return
 		}
 	}
@@ -114,6 +119,7 @@ func (kv *KVServer) killed() bool {
 func (kv *KVServer) Receive() {
 	Pf("Receiving")
 	for x := range kv.applyCh {
+		// Pf("[%v] x is %v", kv.me, x)
 		if x.IsLeader {
 			kv.resCh <- x
 		}
@@ -122,14 +128,14 @@ func (kv *KVServer) Receive() {
 		key := x.Command.(Op).Key
 		value := x.Command.(Op).Value
 		opType := x.Command.(Op).Type
-		kv.mu.Unlock()
 
 		if opType == "Put" {
 			kv.db[key] = value
 		} else if opType == "Append" {
 			kv.db[key] += value
 		}
-		Pf("[%v] DB IS %v", kv.me, kv.db)
+		// Pf("[%v] DB IS %v", kv.me, kv.db)
+		kv.mu.Unlock()
 
 	}
 }

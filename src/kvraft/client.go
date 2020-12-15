@@ -3,7 +3,8 @@ package kvraft
 import (
 	"crypto/rand"
 	"math/big"
-
+	"sync"
+	// "fmt"
 
 	"../labrpc"
 )
@@ -36,12 +37,34 @@ import (
 
 
 
+	if some client request to leader fails what to do ?
+	  Q. But first what it means for a client request to leader to fail and how does client know request failed ?
+	  A. Call() returns false or request times out, that's how client know requset failed
+		  1. if server is dead, or request lost
+		  2. if server communicated, but request lost
+
+		  And these 2 cases are same for the client all he sees is a failed request
+		  But resending request again does not yiels the same results for the above 2 cases
+		  for (1) resending is fine but for (2) an append entry will cause havoc if measures 
+		  are not taken to stop this.
+
+	  Q. So what measure need to be taken ?
+	  A. Client does not have much knowledge to make an informed decision about the resending of request so,
+		 The decision need to made at service level and client always resends requests. KV Server somehow need 
+		 to mitigate this resend, How ? 
+
+
+
+
+
+
 */
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
 	leader int
+	mu      sync.Mutex
 	// Clerk picks a request Id for each request
 	// While sending the request to leader clerk sends the request and
 	// server Id
@@ -81,16 +104,20 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) Get(key string) string {
-
+	ck.mu.Lock()
 	args := GetArgs{key, ck.clerkId, ck.requestId}
 	reply := GetReply{}
 	ck.requestId++
+	ck.mu.Unlock()
+
 	ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
 	for reply.Err == "Not Leader" {
+		ck.mu.Lock()
 		ck.leader = (ck.leader + 1) % len(ck.servers)
+		ck.mu.Unlock()
 		ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
 	}
-	Pf("[ Returning %v", reply)
+	Pf("GET Client Returning %v", reply)
 	return reply.Value
 }
 
@@ -105,15 +132,18 @@ func (ck *Clerk) Get(key string) string {
 // arguments. and reply must be passed as a pointer.
 //
 func (ck *Clerk) PutAppend(key string, value string, op string) {
+	ck.mu.Lock()
 	args := PutAppendArgs{key, value, op, ck.clerkId, ck.requestId}
 	reply := PutAppendReply{}
 	ck.requestId++
+	ck.mu.Unlock()
 	ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
 	for reply.Err == "Not Leader" {
+		ck.mu.Lock()
 		ck.leader = (ck.leader + 1) % len(ck.servers)
+		ck.mu.Unlock()
 		ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
 	}
-	Pf("[%v] Reply is %v, for server %v", ck.clerkId, &reply, ck.leader)
 }
 
 func (ck *Clerk) Put(key string, value string) {
