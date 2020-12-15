@@ -51,7 +51,18 @@ import (
 	  Q. So what measure need to be taken ?
 	  A. Client does not have much knowledge to make an informed decision about the resending of request so,
 		 The decision need to made at service level and client always resends requests. KV Server somehow need 
-		 to mitigate this resend, How ? 
+		 to mitigate this resend, How ?  
+		 The paper mentions of assigning an unique id to each reqeust and state machine keeping track of them.
+		 If we again encounrer the same request return from table. But this  arises the question 
+		  	What happends if client sends a request, raft applies the request, but before replying leader changes(i.e something happed to 
+			this leader maube crashed or partitioned) ?
+			Client will send the request to the new leader, but how will this new leader know the request is already applied ?
+			So to deal with this problem we need to send additional data to raft (client and request Id) so that when any service sees 
+			some command on appltCh it can also sabe the sata from where it came.
+
+			But what if new leader did not apply the latest command before the client resent request ?
+			We need to know that a K/V Servoce and its raft are on the same machine so applying some request to service channel >> rpc time
+			so it would be fair to assume this situation will not arise.
 
 
 
