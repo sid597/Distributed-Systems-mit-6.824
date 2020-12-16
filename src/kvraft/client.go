@@ -121,13 +121,15 @@ func (ck *Clerk) Get(key string) string {
 	ck.requestId++
 	ck.mu.Unlock()
 
-	ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
-	for reply.Err == "Not Leader" {
+	ok := ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
+	for reply.Err == "Not Leader" || reply.Err == "Timeout" || !ok{
 		ck.mu.Lock()
 		ck.leader = (ck.leader + 1) % len(ck.servers)
 		ck.mu.Unlock()
-		ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
+		ok = ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
+		 Pf("GET Client Returning %v, for args %v", reply, args)
 	}
+		 Pf("GET Client Returning %v, for args %v", reply, args)
 	Pf("GET Client Returning %v", reply)
 	return reply.Value
 }
@@ -148,12 +150,13 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 	reply := PutAppendReply{}
 	ck.requestId++
 	ck.mu.Unlock()
-	ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
-	for reply.Err == "Not Leader" {
+	ok := ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
+	for reply.Err == "Not Leader" || reply.Err == "Timeout" || !ok{
 		ck.mu.Lock()
 		ck.leader = (ck.leader + 1) % len(ck.servers)
 		ck.mu.Unlock()
-		ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
+		ok = ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
+		 Pf("PA Client Returning %v", reply)
 	}
 }
 
