@@ -13,7 +13,7 @@ import (
 	"../raft"
 )
 
-const Debug = 1
+const Debug = 0
 
 func Pf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -26,9 +26,11 @@ type Op struct {
 	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
-	Key   string
-	Value string
-	Type  string
+	Key       string
+	Value     string
+	Type      string
+	ClientId  int64
+	RequestId int
 }
 
 type KVServer struct {
@@ -41,15 +43,34 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	resCh   chan raft.ApplyMsg
-	db      map[string]string
-	waiting bool
-	quit    chan bool
+	resCh            chan raft.ApplyMsg
+	db               map[string]string
+	waiting          bool
+	quit             chan bool
+	previousRequests map[int64]PreviousRequest
+}
+type PreviousRequest struct{
+	RequestId int
+	Result string
+
 }
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
+	// check the requestId for the corresponding client and if this requestId > table one
+	// then execute else return the result from table itself 
+	kv.mu.Lock()
+	if previous, ok := kv.previousRequests[args.ClientId]; ok {
+		if args.RequestId <= previous.RequestId {
+			// return value from previous request
+			reply.Err = "Leader"
+			reply.Value = previous.Result
+			kv.mu.Unlock()
+			return
+		} 
+	}
+	kv.mu.Unlock()
 
-	index, _, isLeader := kv.rf.Start(Op{args.Key, "", "Get"})
+	index, _, isLeader := kv.rf.Start(Op{args.Key, "", "Get", args.ClientId, args.RequestId})
 
 	startTime := time.Now()
 
@@ -92,11 +113,23 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 // fmt.Printf("GET Request id is %v \n", args.RequestId)
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
+	// check the requestId for the corresponding client and if this requestId > table one
+	// then execute else return the result from table itself 
+	kv.mu.Lock()
+	if previous, ok := kv.previousRequests[args.ClientId]; ok {
+		if args.RequestId <= previous.RequestId {
+			// return value from previous request
+			reply.Err = "Leader"
+			kv.mu.Unlock()
+			return
+		} 
+	}
 	opType := "Append"
 	if args.Op == "Put" {
 		opType = "Put"
 	}
-	index, _, isLeader := kv.rf.Start(Op{args.Key, args.Value, opType})
+	kv.mu.Unlock()
+	index, _, isLeader := kv.rf.Start(Op{args.Key, args.Value, opType, args.ClientId, args.RequestId})
 
 	startTime := time.Now()
 	if !isLeader {
@@ -154,30 +187,53 @@ func (kv *KVServer) killed() bool {
 	return z == 1
 }
 
+func (kv *KVServer) AlreadySeen(current Op) bool {
+
+	clientId := current.ClientId
+	requestId := current.RequestId
+
+	if previous, ok := kv.previousRequests[clientId]; ok {
+		if previous.RequestId == requestId {
+			return true
+		}
+		return false
+	} 
+	return false
+
+}
+
 func (kv *KVServer) Receive() {
 	Pf("Receiving")
 	for x := range kv.applyCh {
 		// Pf("[%v] x is %v", kv.me, x)
 		kv.mu.Lock()
 		waiting := kv.waiting
+		alreadySeen := kv.AlreadySeen(x.Command.(Op))
 		// Pf("[%v] Waiting %v", kv.me, waiting)
 		kv.mu.Unlock()
-		if waiting {
+		if waiting && !alreadySeen{
 			Pf("[%v] Someone is waiting for reply %v ", kv.me, x)
 			kv.resCh <- x
 		}
 
 		kv.mu.Lock()
+		Pf("Operation is %v", x.Command.(Op))
 		key := x.Command.(Op).Key
 		value := x.Command.(Op).Value
 		opType := x.Command.(Op).Type
-
-		if opType == "Put" {
-			kv.db[key] = value
-		} else if opType == "Append" {
-			kv.db[key] += value
+		clientId := x.Command.(Op).ClientId
+		requestId := x.Command.(Op).RequestId
+		// Check if the result request is already seen 
+		// if not need to update previousRequest table also
+		if !alreadySeen {
+			if opType == "Put" {
+				kv.db[key] = value
+			} else if opType == "Append" {
+				kv.db[key] += value
+			}
+			kv.previousRequests[clientId] = PreviousRequest{requestId, kv.db[key]}
 		}
-		 Pf("[%v] DB IS %v", kv.me, kv.db)
+		Pf("[%v] DB IS %v", kv.me, kv.db)
 		kv.mu.Unlock()
 
 	}
@@ -215,6 +271,7 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 
 	// You may need initialization code here.
 	kv.db = make(map[string]string)
+	kv.previousRequests = make(map[int64]PreviousRequest)
 	go kv.Receive()
 
 	return kv
