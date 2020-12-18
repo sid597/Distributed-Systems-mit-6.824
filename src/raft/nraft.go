@@ -85,6 +85,15 @@ type Raft struct {
 	lastAppliedRpc time.Time
 	NextIndex      []int
 	MatchIndex     []int
+
+	// Snapshot
+	snapshot Snapshot 
+}
+
+type Snapshot struct {
+	LastIncludedIndex int
+	LastIncludedTerm int
+	MachineState map[string]string
 }
 
 type LogEntry struct {
@@ -115,6 +124,7 @@ func (rf *Raft) BecomeLeader() {
 		Pf("[%v] Asked to ____BECOME LEADER______ for term [%v] ", rf.me, rf.currentTerm)
 		rf.state = Leader
 	}
+	// TODO : Snap
 	rf.lastAppliedRpc = time.Now()
 	rf.NextIndex = []int{}
 	rf.MatchIndex = []int{}
@@ -122,9 +132,9 @@ func (rf *Raft) BecomeLeader() {
 	me := rf.me
 
 	for i := 0; i < rf.totalServers; i++ {
-		rf.NextIndex = append(rf.NextIndex, len(rf.log))
+		rf.NextIndex = append(rf.NextIndex, len(rf.log) + rf.snapshot.LastIncludedIndex)
 		if i == me {
-			rf.MatchIndex = append(rf.MatchIndex, len(rf.log)-1)
+			rf.MatchIndex = append(rf.MatchIndex, len(rf.log) + rf.snapshot.LastIncludedIndex - 1)
 		} else {
 			rf.MatchIndex = append(rf.MatchIndex, 0)
 		}
@@ -359,7 +369,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 }
 
 func (rf *Raft) GetLastLogData() (int, int) {
-	index := len(rf.log) - 1
+	index := len(rf.log) - 1  
 	term := rf.log[index].Term
 	return index, term
 }
@@ -590,9 +600,11 @@ func (rf *Raft) ApplyCommit() {
 			for rf.commitIndex > rf.lastApplied {
 
 				Pf("[%v] APPLY COMMIT  last Applied:  %v, commit Index is : %v ", rf.me, rf.lastApplied, rf.commitIndex)
-				Pf("[%v] APPLYING MESSAGE , lastApplied : %v, log Len %v, for log %v", rf.me, rf.lastApplied, len(rf.log), rf.log)
+				Pf("[%v] APPLYING MESSAGE , lastApplied : %v, log Len %v, for log %v", rf.me, rf.lastApplied, len(rf.log) + rf.snapshot.LastIncludedIndex, rf.log)
 				// fmt.Printf("[%v] APPLYING MESSAGE , lastApplied : %v, log Len %v, for log %v \n", rf.me, rf.lastApplied, len(rf.log), rf.log)
-				applyEntries = rf.log[rf.lastApplied+1 : rf.commitIndex+1]
+				fromIndex := rf.lastApplied - rf.snapshot.LastIncludedIndex + 1
+				toIndex := rf.commitIndex - rf.snapshot.LastIncludedIndex + 1
+				applyEntries = rf.log[fromIndex : toIndex]
 				fromIndex = rf.lastApplied
 				rf.lastApplied = rf.commitIndex
 
@@ -615,7 +627,7 @@ type AppendEntriesReply struct {
 	// Fast roll back
 	// Will include extra details :
 	//  XTerm( term in the conflicting entry (none for Case 3)), XIndex( Index of the first entry with that term (none for case 3)), XLen( log length)
-	// Examples :
+	// Examples : S2 is leader
 	// Case 1 ->   S1 : 4 5 5
 	// 			   S2 : 4 6 6 6
 	// Leader does not have XTerm, so nextIndex = XIndex
@@ -642,7 +654,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	currentTerm := rf.currentTerm
 	reply.Term = currentTerm
 	lastEntryIndex, _ := rf.GetLastLogData()
-	Pf("[%v] %v %v args Term : %v, current term : %v, , prevLogIndex : %v, lastEntryIndex %v, log len %v ,args Entries : %v,log : %v", rf.me, args.Mri, args.Ri, args.Term, rf.currentTerm, args.PrevLogIndex, lastEntryIndex, len(rf.log), args.Entries, rf.log)
+	//Pf("[%v] %v %v args Term : %v, current term : %v, , prevLogIndex : %v, lastEntryIndex %v, log len %v ,args Entries : %v,log : %v", rf.me, args.Mri, args.Ri, args.Term, rf.currentTerm, args.PrevLogIndex, lastEntryIndex, len(rf.log), args.Entries, rf.log)
 
 	if args.Term < rf.currentTerm {
 		return
@@ -650,14 +662,14 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	// log too short
 	if lastEntryIndex < args.PrevLogIndex {
-		reply.XLen = len(rf.log)
+		reply.XLen = len(rf.log) + rf.snapshot.LastIncludedIndex
 		return
 	} else {
-		followersTerm := rf.log[args.PrevLogIndex].Term
+		followersTerm := rf.log[args.PrevLogIndex - rf.snapshot.LastIncludedIndex].Term
 		if followersTerm != args.PrevLogTerm {
 			reply.XTerm = followersTerm
 			// find the first index for this term in followers log
-			for i := args.PrevLogIndex; i > 0; i-- {
+			for i := args.PrevLogIndex - rf.snapshot.LastIncludedIndex; i > 0; i-- {
 				if rf.log[i].Term != followersTerm {
 					reply.XIndex = i + 1
 					break
@@ -685,9 +697,8 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		example 2: follower log :   [(0,0), (2,101), (2, 103), (2,104), (2,105)]
 					Leader Request : PI: 3, PT: 2, entries: [(2,107) ]
 	*/
-
-	Pf("[%v] %v %v Current log Len : %v, entries len : %v, applied index : %v, prev log index : %v", rf.me, args.Mri, args.Ri, len(rf.log), len(args.Entries), rf.lastApplied, args.PrevLogIndex)
-	appendAfterLogIndex := args.PrevLogIndex + 1
+	// Pf("[%v] %v %v Current log Len : %v, entries len : %v, applied index : %v, prev log index : %v", rf.me, args.Mri, args.Ri, len(rf.log), len(args.Entries), rf.lastApplied, args.PrevLogIndex)
+	appendAfterLogIndex := args.PrevLogIndex - rf.snapshot.LastIncludedIndex + 1
 	appendAfterEntryIndex := 0
 
 	for _, entry := range args.Entries {
@@ -709,17 +720,17 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.log = append(rf.log[:appendAfterLogIndex], args.Entries[appendAfterEntryIndex:]...)
 	}
 	//}
-	Pf("[%v] %v %v New log len %v, is %v ", rf.me, args.Mri, args.Ri, len(rf.log), rf.log)
+	// Pf("[%v] %v %v New log len %v, is %v ", rf.me, args.Mri, args.Ri, len(rf.log), rf.log)
 	//fmt.Printf("[%v] %v %v New log len %v, is %v \n ", rf.me, args.Mri, args.Ri, len(rf.log), rf.log)
 
 	Pf("[%v] %v %v Leader commit > commit Index : %v ", rf.me, args.Mri, args.Ri, args.LeaderCommit > rf.commitIndex)
 
 	// if leader commit > commitIndex ; commitIndex = min (leader commit, index of last new entry)
 	if args.LeaderCommit > rf.commitIndex {
-		if args.LeaderCommit < len(rf.log) {
+		if args.LeaderCommit < len(rf.log) + rf.snapshot.LastIncludedIndex {
 			rf.commitIndex = args.LeaderCommit
 		} else {
-			rf.commitIndex = len(rf.log)
+			rf.commitIndex = len(rf.log) + rf.snapshot.LastIncludedIndex
 		}
 		//rf.ApplyCommit()
 	}
@@ -785,6 +796,18 @@ func (rf *Raft) SendAppendEntryRPC(server int, args *AppendEntriesArgs, reply *A
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// Snapshot
+////////////////////////////////////////////////////////////////////////////////
+
+func (rf *Raft) DiscardEntriesBefore (index int, snapshot map[string]string){
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.snapshot = Snapshot{index - 1, rf.log[index - 1].Term, snapshot}
+	rf.log = rf.log[index:]
+	rf.persistSnapshot()
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // Make
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -819,6 +842,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	rf.readSnapshot(persister.ReadSnapshot())
 	rf.readPersist(persister.ReadRaftState())
 	rf.BecomeFollower()
 
@@ -867,15 +891,43 @@ func (rf *Raft) persist() {
 	rf.persister.SaveRaftState(data)
 }
 
+func (rf *Raft) persistSnapshot() {
+	w := new(bytes.Buffer)
+	e := labgob.NewEncoder(w)
+	e.Encode(rf.currentTerm)
+	e.Encode(rf.votedFor)
+	e.Encode(rf.log)
+	state := w.Bytes()
+
+	w0 := new(bytes.Buffer)
+	e0:= labgob.NewEncoder(w)
+	e0.Encode(rf.snapshot)
+	snap := w0.Bytes()
+	rf.persister.SaveStateAndSnapshot(state, snap)
+	
+}
 //
 // restore previously persisted state.
-//
+//k
+func (rf *Raft) readSnapshot(data []byte) {
+	if data == nil || len(data) < 1 {
+		rf.snapshot = Snapshot{}
+	}
+	r := bytes.NewBuffer(data)
+	d := labgob.NewDecoder(r)
+	var snap Snapshot
+	if d.Decode(&snap) != nil {
+
+	} else {
+		rf.snapshot = snap
+	}
+}
+
 func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
 		rf.currentTerm = 1
 		rf.votedFor = rf.totalServers + 1
 		rf.lastReceived = time.Now()
-
 		// For 2B
 		rf.log = []LogEntry{}
 		rf.commitIndex = 0 // To be initialized at 0 because log index starts from 1
@@ -883,6 +935,7 @@ func (rf *Raft) readPersist(data []byte) {
 
 		firstEntry := LogEntry{Term: 0, Command: 0}
 		rf.log = append(rf.log, firstEntry)
+		rf.snapshot = Snapshot{}
 		return
 	}
 	r := bytes.NewBuffer(data)
@@ -902,6 +955,7 @@ func (rf *Raft) readPersist(data []byte) {
 	}
 }
 
+
 //
 // the tester doesn't halt goroutines created by Raft after each test,
 // but it does call the Kill() method. your code can use killed() to
@@ -919,7 +973,7 @@ func (rf *Raft) Kill() {
 	Pf("###################### KILL CALLED ##############################")
 	Pf("###################### KILL CALLED ##############################")
 	Pf("###################### KILL CALLED ##############################")
-	Pf("[%v] log len %v;; LOG : %v", rf.me, len(rf.log), rf.log)
+	// Pf("[%v] log len %v;; LOG : %v", rf.me, len(rf.log), rf.log)
 	Pf("###################### KILL CALLED ##############################")
 	Pf("###################### KILL CALLED ##############################")
 	Pf("###################### KILL CALLED ##############################")

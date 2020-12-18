@@ -4,6 +4,7 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"bytes"
 
 	// "fmt"
 	"time"
@@ -43,6 +44,7 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
+	persistor 		 *raft.Persister
 	resCh            chan raft.ApplyMsg
 	db               map[string]string
 	waiting          bool
@@ -52,8 +54,19 @@ type KVServer struct {
 type PreviousRequest struct{
 	RequestId int
 	Result string
-
 }
+
+// Snapshot 
+
+func (kv *KVServer) TakeSnapshot() {
+	for {
+		time.Sleep(10 * time.Millisecond)
+		if kv.maxraftstate >= kv.persistor.RaftStateSize() {
+			kv.rf.DiscardEntriesBefore(kv.maxraftstate, rf.db)
+		}
+	}
+}
+
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// check the requestId for the corresponding client and if this requestId > table one
