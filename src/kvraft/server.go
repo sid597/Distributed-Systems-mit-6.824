@@ -4,7 +4,6 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
-	"bytes"
 
 	// "fmt"
 	"time"
@@ -44,7 +43,7 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	persistor 		 *raft.Persister
+	persister 		 *raft.Persister
 	resCh            chan raft.ApplyMsg
 	db               map[string]string
 	waiting          bool
@@ -61,8 +60,14 @@ type PreviousRequest struct{
 func (kv *KVServer) TakeSnapshot() {
 	for {
 		time.Sleep(10 * time.Millisecond)
-		if kv.maxraftstate >= kv.persistor.RaftStateSize() {
-			kv.rf.DiscardEntriesBefore(kv.maxraftstate, rf.db)
+		
+		if  kv.persister.RaftStateSize() >= kv.maxraftstate{
+			kv.mu.Lock()
+			commitIndex := kv.rf.CommitIndex
+			db := kv.db
+			kv.mu.Unlock()
+			// fmt.Printf("[%v] DIscarding entries wupto %v \n", kv.me, kv.rf.CommitIndex)
+			kv.rf.DiscardEntriesUpto(commitIndex, db)
 		}
 	}
 }
@@ -88,16 +93,15 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	startTime := time.Now()
 
 	if !isLeader {
-		Pf("[%v] Not Leader", kv.me)
 		reply.Err = "Not Leader"
 		return
 	} else {
 		kv.mu.Lock()
 		kv.waiting = true
 		kv.mu.Unlock()
-		Pf("[%v] GET request, Key: %v, RId : %v, for index %v", kv.me, args.Key, args.RequestId, index)
+		Pf(" GET request, Key: %v, RId : %v, for index %v", args.Key, args.RequestId, index)
 		for {
-			Pf("[%v] GET New request with args %v", kv.me, args)
+			Pf("[%v] GET NEW REQUEST with args %v", kv.me, args)
 			select {
 			case <-time.After(time.Millisecond * 600):
 				kv.mu.Lock()
@@ -107,7 +111,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 				kv.mu.Unlock()
 				return
 			case res := <-kv.resCh:
-				Pf("GET RECEIVED ON CHANNEL, res is %v", res)
+				Pf("[%v] GET RECEIVED ON CHANNEL, res is %v", kv.me, res)
 				kv.mu.Lock()
 				if res.CommandIndex == index {
 					reply.Err = "Leader"
@@ -149,7 +153,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 		reply.Err = "Not Leader"
 		return
 	} else {
-		Pf("[%v] PA New request with args %v", kv.me, args)
+		Pf("PA NEW REQUEST with args %v", args)
 		kv.mu.Lock()
 		kv.waiting = true
 		kv.mu.Unlock()
@@ -163,9 +167,14 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 				kv.mu.Unlock()
 				return
 			case res := <-kv.resCh:
-				Pf("PA RECEIVED ON CHANNEL, res %v, index %v", res, index)
 				kv.mu.Lock()
-				if res.CommandIndex == index {
+				if res.Command.(Op).ClientId != args.ClientId{
+					reply.Err = "Timeout" 
+					kv.mu.Unlock()
+					return
+				}
+				Pf("[%v] PA RECEIVED ON CHANNEL, for args %v, res %v, index %v", kv.me, args, res, index)
+				if res.CommandIndex == index{
 					reply.Err = "Leader"
 					Pf("[%v] Result is %v, index is %v, reply %v", kv.me, res, index, reply)
 					Pf("[%v] DB IS %v", kv.me, kv.db)
@@ -218,36 +227,45 @@ func (kv *KVServer) AlreadySeen(current Op) bool {
 func (kv *KVServer) Receive() {
 	Pf("Receiving")
 	for x := range kv.applyCh {
-		// Pf("[%v] x is %v", kv.me, x)
-		kv.mu.Lock()
-		waiting := kv.waiting
-		alreadySeen := kv.AlreadySeen(x.Command.(Op))
-		// Pf("[%v] Waiting %v", kv.me, waiting)
-		kv.mu.Unlock()
-		if waiting && !alreadySeen{
-			Pf("[%v] Someone is waiting for reply %v ", kv.me, x)
-			kv.resCh <- x
-		}
-
-		kv.mu.Lock()
-		Pf("Operation is %v", x.Command.(Op))
-		key := x.Command.(Op).Key
-		value := x.Command.(Op).Value
-		opType := x.Command.(Op).Type
-		clientId := x.Command.(Op).ClientId
-		requestId := x.Command.(Op).RequestId
-		// Check if the result request is already seen 
-		// if not need to update previousRequest table also
-		if !alreadySeen {
-			if opType == "Put" {
-				kv.db[key] = value
-			} else if opType == "Append" {
-				kv.db[key] += value
+		 Pf("[%v] x is %v", kv.me, x)
+		
+		if x.CommandValid {
+			kv.mu.Lock()
+			waiting := kv.waiting
+			alreadySeen := kv.AlreadySeen(x.Command.(Op))
+			// Pf("[%v] Waiting %v", kv.me, waiting)
+			kv.mu.Unlock()
+			if waiting && !alreadySeen {
+				Pf("[%v] Someone is waiting for reply %v ", kv.me, x)
+				kv.resCh <- x
 			}
-			kv.previousRequests[clientId] = PreviousRequest{requestId, kv.db[key]}
+
+			kv.mu.Lock()
+			Pf("Operation is %v", x.Command.(Op))
+			key := x.Command.(Op).Key
+			value := x.Command.(Op).Value
+			opType := x.Command.(Op).Type
+			clientId := x.Command.(Op).ClientId
+			requestId := x.Command.(Op).RequestId
+			// Check if the result request is already seen 
+			// if not need to update previousRequest table also
+			if !alreadySeen {
+				if opType == "Put" {
+					kv.db[key] = value
+				} else if opType == "Append" {
+					kv.db[key] += value
+				}
+				kv.previousRequests[clientId] = PreviousRequest{requestId, kv.db[key]}
+			}
+			Pf("[%v] DB IS %v", kv.me, kv.db)
+			kv.mu.Unlock()
+		} else {
+			kv.mu.Lock()
+			kv.db = x.Data
+			kv.mu.Unlock()
 		}
-		Pf("[%v] DB IS %v", kv.me, kv.db)
-		kv.mu.Unlock()
+		
+		
 
 	}
 }
@@ -285,7 +303,9 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	// You may need initialization code here.
 	kv.db = make(map[string]string)
 	kv.previousRequests = make(map[int64]PreviousRequest)
+	kv.persister = persister
 	go kv.Receive()
+	go kv.TakeSnapshot()
 
 	return kv
 }
