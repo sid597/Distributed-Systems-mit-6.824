@@ -130,8 +130,8 @@ func (ck *Clerk) Get(key string) string {
 		ok = ck.servers[ck.leader].Call("KVServer.Get", &args, &reply)
 		//  Pf("GET Client Returning %v, for args %v", reply, args)
 	}
-		 Pf("GET Client Returning %v, for args %v", reply, args)
-	Pf("GET Client Returning %v", reply)
+		//  Pf("GET Client Returning %v, for args %v", reply, args)
+	// Pf("GET Client Returning %v", reply)
 	return reply.Value
 }
 
@@ -158,7 +158,7 @@ func (ck *Clerk) PutAppend(key string, value string, op string) {
 		ck.leader = (ck.leader + 1) % len(ck.servers)
 		ck.mu.Unlock()
 		ok = ck.servers[ck.leader].Call("KVServer.PutAppend", &args, &reply)
-		 Pf("PA Client Returning %v", reply)
+		//  Pf("PA Client Returning %v", reply)
 	}
 }
 

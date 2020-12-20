@@ -1,6 +1,7 @@
 package kvraft
 
 import (
+	"bytes"
 	"log"
 	"sync"
 	"sync/atomic"
@@ -13,7 +14,7 @@ import (
 	"../raft"
 )
 
-const Debug = 0
+const Debug = 1
 
 func Pf(format string, a ...interface{}) (n int, err error) {
 	if Debug > 0 {
@@ -43,39 +44,23 @@ type KVServer struct {
 	maxraftstate int // snapshot if log grows this big
 
 	// Your definitions here.
-	persister 		 *raft.Persister
+	persister        *raft.Persister
 	resCh            chan raft.ApplyMsg
 	db               map[string]string
 	waiting          bool
 	quit             chan bool
 	previousRequests map[int64]PreviousRequest
 }
-type PreviousRequest struct{
+type PreviousRequest struct {
 	RequestId int
-	Result string
+	Result    string
 }
 
-// Snapshot 
-
-func (kv *KVServer) TakeSnapshot() {
-	for {
-		time.Sleep(10 * time.Millisecond)
-		
-		if  kv.persister.RaftStateSize() >= kv.maxraftstate{
-			kv.mu.Lock()
-			commitIndex := kv.rf.CommitIndex
-			db := kv.db
-			kv.mu.Unlock()
-			// fmt.Printf("[%v] DIscarding entries wupto %v \n", kv.me, kv.rf.CommitIndex)
-			kv.rf.DiscardEntriesUpto(commitIndex, db)
-		}
-	}
-}
-
+// Snapshot
 
 func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 	// check the requestId for the corresponding client and if this requestId > table one
-	// then execute else return the result from table itself 
+	// then execute else return the result from table itself
 	kv.mu.Lock()
 	if previous, ok := kv.previousRequests[args.ClientId]; ok {
 		if args.RequestId <= previous.RequestId {
@@ -84,7 +69,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 			reply.Value = previous.Result
 			kv.mu.Unlock()
 			return
-		} 
+		}
 	}
 	kv.mu.Unlock()
 
@@ -131,7 +116,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// check the requestId for the corresponding client and if this requestId > table one
-	// then execute else return the result from table itself 
+	// then execute else return the result from table itself
 	kv.mu.Lock()
 	if previous, ok := kv.previousRequests[args.ClientId]; ok {
 		if args.RequestId <= previous.RequestId {
@@ -139,7 +124,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 			reply.Err = "Leader"
 			kv.mu.Unlock()
 			return
-		} 
+		}
 	}
 	opType := "Append"
 	if args.Op == "Put" {
@@ -168,13 +153,13 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 				return
 			case res := <-kv.resCh:
 				kv.mu.Lock()
-				if res.Command.(Op).ClientId != args.ClientId{
-					reply.Err = "Timeout" 
+				if res.Command.(Op).ClientId != args.ClientId {
+					reply.Err = "Timeout"
 					kv.mu.Unlock()
 					return
 				}
 				Pf("[%v] PA RECEIVED ON CHANNEL, for args %v, res %v, index %v", kv.me, args, res, index)
-				if res.CommandIndex == index{
+				if res.CommandIndex == index {
 					reply.Err = "Leader"
 					Pf("[%v] Result is %v, index is %v, reply %v", kv.me, res, index, reply)
 					Pf("[%v] DB IS %v", kv.me, kv.db)
@@ -219,7 +204,7 @@ func (kv *KVServer) AlreadySeen(current Op) bool {
 			return true
 		}
 		return false
-	} 
+	}
 	return false
 
 }
@@ -227,8 +212,8 @@ func (kv *KVServer) AlreadySeen(current Op) bool {
 func (kv *KVServer) Receive() {
 	Pf("Receiving")
 	for x := range kv.applyCh {
-		 Pf("[%v] x is %v", kv.me, x)
-		
+		Pf("[%v] x is %v", kv.me, x)
+
 		if x.CommandValid {
 			kv.mu.Lock()
 			waiting := kv.waiting
@@ -247,7 +232,7 @@ func (kv *KVServer) Receive() {
 			opType := x.Command.(Op).Type
 			clientId := x.Command.(Op).ClientId
 			requestId := x.Command.(Op).RequestId
-			// Check if the result request is already seen 
+			// Check if the result request is already seen
 			// if not need to update previousRequest table also
 			if !alreadySeen {
 				if opType == "Put" {
@@ -257,15 +242,29 @@ func (kv *KVServer) Receive() {
 				}
 				kv.previousRequests[clientId] = PreviousRequest{requestId, kv.db[key]}
 			}
+			db := kv.db
 			Pf("[%v] DB IS %v", kv.me, kv.db)
 			kv.mu.Unlock()
+			if kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate {
+				w := new(bytes.Buffer)
+				e := labgob.NewEncoder(w)
+				e.Encode(db)
+				db := w.Bytes()
+				go kv.rf.DiscardEntriesUpto(x.CommandIndex-1, db)
+
+			}
 		} else {
 			kv.mu.Lock()
-			kv.db = x.Data
+			r := bytes.NewBuffer(x.Data)
+			d := labgob.NewDecoder(r)
+			var snap map[string]string
+			d.Decode(&snap)
+
+			Pf("[%v] NEW DATA DARLINGS %v, data %v", kv.me, snap, x.Data)
+			kv.db = snap
+			Pf("[%v] DB IS %v", kv.me, kv.db)
 			kv.mu.Unlock()
 		}
-		
-		
 
 	}
 }
@@ -298,14 +297,13 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.resCh = make(chan raft.ApplyMsg)
 	kv.quit = make(chan bool)
-	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
 	// You may need initialization code here.
 	kv.db = make(map[string]string)
 	kv.previousRequests = make(map[int64]PreviousRequest)
 	kv.persister = persister
 	go kv.Receive()
-	go kv.TakeSnapshot()
 
+	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 	return kv
 }
