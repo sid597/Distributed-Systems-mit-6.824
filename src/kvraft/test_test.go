@@ -243,7 +243,15 @@ func GenericTest(t *testing.T, part string, nclients int, unreliable bool, crash
 		}
 
 		if crash {
-			// log.Printf("shutdown servers\n")
+			Pf("")
+			Pf("")
+			Pf("")
+			Pf("")
+			Pf("")
+			log.Printf("shutdown servers\n")
+			Pf("")
+			Pf("")
+			Pf("")
 			for i := 0; i < nservers; i++ {
 				cfg.ShutdownServer(i)
 			}
@@ -651,6 +659,7 @@ func TestSnapshotRPC3B(t *testing.T) {
 	// lagging server, so that it has to catch up.
 	cfg.partition([]int{0, 2}, []int{1})
 	{
+		Pf("FAILING")
 		ck1 := cfg.makeClient([]int{0, 2})
 		Put(cfg, ck1, "c", "C")
 		Put(cfg, ck1, "d", "D")
@@ -689,7 +698,10 @@ func TestSnapshotSize3B(t *testing.T) {
 		check(cfg, t, ck, "x", "0")
 		Put(cfg, ck, "x", "1")
 		check(cfg, t, ck, "x", "1")
+		Pf("CASE: %v",i)
 	}
+
+	Pf("CHECKED ")
 
 	// check that servers have thrown away most of their log entries
 	sz := cfg.LogSize()
