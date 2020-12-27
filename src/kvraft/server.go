@@ -8,6 +8,7 @@ import (
 
 	// "fmt"
 	"time"
+	"math/rand"
 
 	"../labgob"
 	"../labrpc"
@@ -96,7 +97,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 				kv.mu.Unlock()
 				return
 			case res := <-kv.resCh:
-				Pf("[%v] GET RECEIVED ON CHANNEL, res is %v", kv.me, res)
+				Pf("[%v] GET RECEIVED ON CHANNEL, res is %v, args were %v", kv.me, res, &args)
 				kv.mu.Lock()
 				if res.CommandIndex == index {
 					reply.Err = "Leader"
@@ -224,46 +225,50 @@ func (kv *KVServer) Receive() {
 				Pf("[%v] Someone is waiting for reply %v ", kv.me, x)
 				kv.resCh <- x
 			}
-
-			kv.mu.Lock()
-			Pf("Operation is %v", x.Command.(Op))
-			key := x.Command.(Op).Key
-			value := x.Command.(Op).Value
-			opType := x.Command.(Op).Type
-			clientId := x.Command.(Op).ClientId
-			requestId := x.Command.(Op).RequestId
-			// Check if the result request is already seen
-			// if not need to update previousRequest table also
-			if !alreadySeen {
-				if opType == "Put" {
-					kv.db[key] = value
-				} else if opType == "Append" {
-					kv.db[key] += value
+			func () {
+				kv.mu.Lock()
+				Pf("Operation is %v, current db state %v", x.Command.(Op), kv.db)
+				key := x.Command.(Op).Key
+				value := x.Command.(Op).Value
+				opType := x.Command.(Op).Type
+				clientId := x.Command.(Op).ClientId
+				requestId := x.Command.(Op).RequestId
+				// Check if the result request is already seen
+				// if not need to update previousRequest table also
+				if !alreadySeen {
+					if opType == "Put" {
+						kv.db[key] = value
+					} else if opType == "Append" {
+						kv.db[key] += value
+					}
+					kv.previousRequests[clientId] = PreviousRequest{requestId, kv.db[key]}
 				}
-				kv.previousRequests[clientId] = PreviousRequest{requestId, kv.db[key]}
-			}
-			db := kv.db
-			Pf("[%v] DB IS %v", kv.me, kv.db)
-			kv.mu.Unlock()
-			if kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate {
-				w := new(bytes.Buffer)
-				e := labgob.NewEncoder(w)
-				e.Encode(db)
-				db := w.Bytes()
-				go kv.rf.DiscardEntriesUpto(x.CommandIndex-1, db)
+				db := kv.db
+				Pf("[%v] AFTER Opertation completion DB IS %v", kv.me, kv.db)
+				if kv.maxraftstate != -1 && kv.persister.RaftStateSize() > kv.maxraftstate {
+					w := new(bytes.Buffer)
+					e := labgob.NewEncoder(w)
+					e.Encode(db)
+					db := w.Bytes()
+					ri := rand.Intn(300)
+					Pf("[%v] Sending command with ri %v", kv.me, ri)
+					kv.mu.Unlock()
+					go kv.rf.DiscardEntriesUpto(x.CommandIndex-1, db, ri)
+					return
+				}
+				kv.mu.Unlock()
+			}()
+		}	 else {
+				kv.mu.Lock()
+				r := bytes.NewBuffer(x.Data)
+				d := labgob.NewDecoder(r)
+				var snap map[string]string
+				d.Decode(&snap)
 
-			}
-		} else {
-			kv.mu.Lock()
-			r := bytes.NewBuffer(x.Data)
-			d := labgob.NewDecoder(r)
-			var snap map[string]string
-			d.Decode(&snap)
-
-			Pf("[%v] NEW DATA DARLINGS %v, data %v", kv.me, snap, x.Data)
-			kv.db = snap
-			Pf("[%v] DB IS %v", kv.me, kv.db)
-			kv.mu.Unlock()
+				Pf("[%v] NEW DATA DARLINGS %v, data %v", kv.me, snap, x.Data)
+				kv.db = snap
+				Pf("[%v] DB IS %v", kv.me, kv.db)
+				kv.mu.Unlock()
 		}
 
 	}

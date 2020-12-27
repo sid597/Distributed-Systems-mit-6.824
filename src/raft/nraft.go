@@ -631,7 +631,8 @@ func (rf *Raft) ApplyCommit() {
 	for !rf.killed() {
 		time.Sleep(17 * time.Millisecond)
 
-		applyEntries := []LogEntry{}
+		applyEntries := []ApplyMsg{}
+		entriesSlice := []LogEntry{}
 		rf.Mu.Lock()
 		fromIndex := rf.LastApplied
 		leader := rf.State == Leader
@@ -648,16 +649,22 @@ func (rf *Raft) ApplyCommit() {
 				//  fmt.Printf("[%v] APPLYING MESSAGE , lastApplied : %v, log Len %v, for log %v \n", rf.me, rf.LastApplied, rf.logLen(), rf.Log)
 				fromIndex := rf.LastApplied - rf.snapshot.LastIncludedIndex + 1
 				toIndex := rf.CommitIndex - rf.snapshot.LastIncludedIndex + 1
-				applyEntries = rf.Log[fromIndex:toIndex]
+				entriesSlice = rf.Log[fromIndex:toIndex]
 				fromIndex = rf.LastApplied
 				rf.LastApplied = rf.CommitIndex
 
 			}
+			for i, entry := range entriesSlice {
+						newMsg := ApplyMsg{CommandValid: true, Command: entry.Command, CommandIndex: fromIndex + i + 1, IsLeader: leader}
+						applyEntries = append(applyEntries, newMsg)
+			}
 		}()
 
-		for i, entry := range applyEntries {
-			newMsg := ApplyMsg{CommandValid: true, Command: entry.Command, CommandIndex: fromIndex + i + 1, IsLeader: leader}
-			rf.applyCh <- newMsg
+			Pf("[%v] Inside apply entries, AE slice is  %v", rf.me, applyEntries)
+			if len(applyEntries) > 0 { 
+				for _, entry := range applyEntries {
+					rf.applyCh <- entry
+			}
 		}
 	}
 }
@@ -819,8 +826,8 @@ func (rf *Raft) SendAppendEntryRPC(server int, args *AppendEntriesArgs, reply *A
 				return ok
 
 			} else {
-
 				// rf.MakeItTrue(server, ri)
+				// Pf("[%v]")	
 				if reply.XLen != 0 {
 					rf.NextIndex[server] = reply.XLen
 				} else {
@@ -861,19 +868,26 @@ func (rf *Raft) logLen() int {
 	// rf.Mu.Unlock()
 	return len
 }
-func (rf *Raft) DiscardEntriesUpto(index int, snapshot []byte) {
+
+func max(a, b int) int {
+	if a < b {
+		return b
+	}
+	return a 
+}
+
+func (rf *Raft) DiscardEntriesUpto(index int, snapshot []byte, ri int) {
 	rf.Mu.Lock()
 	defer rf.Mu.Unlock()
 	snap := rf.DecodeSnap(snapshot)
-	fmt.Printf("[%v] Snapshot is %v", rf.me, snap)
-
-	discardFromIndex := index + 1 - rf.snapshot.LastIncludedIndex
-	Pf("[%v] Discard from index %v", rf.me, discardFromIndex)
-	Pf("[%v] Discard from Index %v, log to be discarded is %v ", rf.me, index+1-rf.snapshot.LastIncludedIndex, rf.Log[discardFromIndex])
+	fmt.Printf("[%v] %v Snapshot is %v \n", rf.me, ri, snap)
+	discardFromIndex := max(index + 1 - rf.snapshot.LastIncludedIndex, 1)
+	Pf("[%v] %v Discard from index %v, current log %v", rf.me, ri, discardFromIndex, rf.Log)
+	Pf("[%v] %v Discard from Index %v, log to be discarded is %v ", rf.me, ri, index + 1 - rf.snapshot.LastIncludedIndex, rf.Log[discardFromIndex])
 	rf.snapshot = Snapshot{index, rf.Log[discardFromIndex].Term, snap}
 	rf.Log = append(rf.Log[:1], rf.Log[discardFromIndex:]...)
 	rf.LastApplied = index
-	Pf("[%v] AFTER DISCARDING LOG : %v, Previous index %v", rf.me, rf.Log, index)
+	Pf("[%v] %v  AFTER DISCARDING LOG : %v, Previous index %v", rf.me, ri, rf.Log, index)
 }
 
 func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
@@ -906,6 +920,7 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 }
 
 func (rf *Raft) SendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) {
+	Pf("[%v] Sending Install snapshot to server %v, with args %v", rf.me, server, args)
 	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
 	rf.Mu.Lock()
 	defer rf.Mu.Unlock()
