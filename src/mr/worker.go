@@ -30,9 +30,9 @@ type KeyValue struct {
 type WorkerDetails struct {
     Id int
     Pid int
-    R int // TS
-    StartTime time.Time // task specific  TS
-    Task string // TS
+    R int // No of reduce workers
+    StartTime time.Time 
+    State string  // state of worker : Map, Reduce, Done, Wait
     MapFileName string // Ts
     ReduceFileName string // TS
     ReduceFileNo int // TS
@@ -41,12 +41,6 @@ type WorkerDetails struct {
 }
 
 var CurrentWorker WorkerDetails
-
-////////////////////////////////////////////////
-// RPC
-////////////////////////////////////////////////
-
-
 
 
 ////////////////////////////////////////////////
@@ -60,17 +54,17 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
     CurrentWorker = GetTask()
     ///fmt.Println("Current worker details are :",CurrentWorker)
     // A special keyword to tell if all files are done
-    for CurrentWorker.Task != "Done" {
-        if CurrentWorker.Task == "Map"{
+    for CurrentWorker.State != "Done" {
+        if CurrentWorker.State == "Map"{
             MapTask(CurrentWorker.MapFileName, mapf)
              //time.Sleep(50 * time.Millisecond)   // Used to test map running in parallel or not
              TellMasterIAmDone(CurrentWorker)
             ///res := TellMasterIAmDone(CurrentWorker)
             ///fmt.Println("Master reply for our Done request, for Map worker ",CurrentWorker.Id,res.Message)
 
-        } else if CurrentWorker.Task == "Wait" {
+        } else if CurrentWorker.State == "Wait" {
             time.Sleep(1 * time.Second)
-        } else if CurrentWorker.Task == "Reduce" {
+        } else if CurrentWorker.State == "Reduce" {
             ReduceTask(CurrentWorker.ReduceFileNo, CurrentWorker.AllMapWorkers, reducef)
             //time.Sleep(50 * time.Millisecond)   // Used to test reduce running in parallel or not
             TellMasterIAmDone(CurrentWorker)
@@ -119,8 +113,8 @@ func MapTask(filename string, mapf func(string,string)[]KeyValue) bool {
         //fmt.Println(string(content))
 		kva := mapf(filename, string(content))
         for _,kv := range kva {
-            hsh := (ihash(kv.Key) % CurrentWorker.R)
-            WriteMapTo(hsh,kv)
+            reduceFileNo := (ihash(kv.Key) % CurrentWorker.R)
+            WriteMapTo(reduceFileNo,kv)
         }
         return true
 }
@@ -219,9 +213,9 @@ func CreateInterFiles() bool  {
 }
 
 // Write Map KeyValue Slice output to R-th file
-func WriteMapTo(reduceNo int,KV KeyValue) bool {
+func WriteMapTo(reduceFileNo int,KV KeyValue) bool {
 
-    filename := fmt.Sprint("mr-inter-", CurrentWorker.Id, "-", reduceNo, ".tmp")
+    filename := fmt.Sprint("mr-inter-", CurrentWorker.Id, "-", reduceFileNo, ".tmp")
     file, err := os.OpenFile(filename, os.O_APPEND|os.O_WRONLY, os.ModeAppend)
     if err != nil {
         fmt.Println("Error while writinf to map file", err)

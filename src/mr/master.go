@@ -44,49 +44,53 @@ func (m *MasterDetails) Example(args *ExampleArgs, reply *ExampleReply) error {
 	return nil
 }
 
-func (m *MasterDetails) AssignNewTask(args *NoArgs, nw *WorkerDetails) error {
+func (m *MasterDetails) AssignNewTask(args *NoArgs, newTask *WorkerDetails) error {
+			Lok.Lock()
 	//fmt.Println("Got asked to assign new task",Master.MapTaskFiles)
 	if len(Master.CompletedMapTasks) != Master.TotalMapTasks {
 		if len(Master.MapTaskFiles) > 0 {
-			nw.Task = "Map"
-			nw.MapFileName, Master.MapTaskFiles = Master.MapTaskFiles[0], Master.MapTaskFiles[1:]
-			nw.Id = Master.WorkerCtr
-			nw.R = Master.R
-			nw.StartTime = time.Now()
+			newTask.State = "Map"
+			newTask.MapFileName, Master.MapTaskFiles = Master.MapTaskFiles[0], Master.MapTaskFiles[1:]
+			newTask.Id = Master.WorkerCtr
+			newTask.R = Master.R
+			newTask.StartTime = time.Now()
 			Master.WorkerCtr += 1
-			OnGoingTasks[nw.Id] = *nw
+			OnGoingTasks[newTask.Id] = *newTask
 		} else {
-			nw.Task = "Wait"
+			newTask.State = "Wait"
 			///fmt.Println(Master.CompletedMapTasks, Master.MapTaskFiles)
 		}
-	} else if len(Master.CompletedMapTasks) == Master.TotalMapTasks {
+	} else {
 		if len(Master.ReduceTaskNumbers) > 0 {
-			nw.Task = "Reduce"
-			nw.ReduceFileNo, Master.ReduceTaskNumbers = Master.ReduceTaskNumbers[0], Master.ReduceTaskNumbers[1:]
-			nw.Id = Master.WorkerCtr
-			nw.R = Master.R
-			nw.StartTime = time.Now()
+			newTask.State = "Reduce"
+			newTask.ReduceFileNo, Master.ReduceTaskNumbers = Master.ReduceTaskNumbers[0], Master.ReduceTaskNumbers[1:]
+			newTask.Id = Master.WorkerCtr
+			newTask.R = Master.R
+			newTask.StartTime = time.Now()
 			Master.WorkerCtr += 1
-			nw.AllMapWorkers = Master.CompletedMapTasks
-			OnGoingTasks[nw.Id] = *nw
+			newTask.AllMapWorkers = Master.CompletedMapTasks
+			OnGoingTasks[newTask.Id] = *newTask
 		} else if len(Master.CompletedReduceTaskNumbers) != Master.R{
-			nw.Task = "Wait"
+			newTask.State = "Wait"
 		} else {
-			nw.Task = "Done"
+			newTask.State = "Done"
 		}
 	}
+			Lok.Unlock()
 	//fmt.Println(OnGoingTasks)
 	return nil
 }
 
 func (m *MasterDetails) WorkerDone(w *WorkerDetails, msg *MessageForWorker) error {
+	Lok.Lock()
+	defer Lok.Unlock()
 
 	// Add the completed task to the respective completed tasks list
-	if w.Task == "Map" {
+	if w.State == "Map" {
 		MakePermanent(w)
 		Master.CompletedMapTasks = append(Master.CompletedMapTasks, w.Id)
 
-	} else if w.Task == "Reduce" {
+	} else if w.State == "Reduce" {
 		Master.CompletedReduceTaskNumbers = append(Master.CompletedReduceTaskNumbers, w.Id)
 	}
 
@@ -116,6 +120,7 @@ func MakeMaster(files []string, nReduce int) *MasterDetails {
 	Master = MasterDetails{}
 	NewMaster(files, nReduce)
 	///fmt.Println(Master)
+	go GC()
 
 	Master.server()
 	return &Master
@@ -123,38 +128,41 @@ func MakeMaster(files []string, nReduce int) *MasterDetails {
 
 // Garbage collector removes the unnecessary workers
 func GC() {
-	Lok.Lock()
-	fmt.Println("Called GC")
-	for _, wrkr := range OnGoingTasks {
-		if time.Now().Sub(wrkr.StartTime) > (10 * time.Second) {
-			fmt.Println("_______________________GC START______________________________")
+	for {
+		time.Sleep(500 * time.Millisecond)
+		Lok.Lock()
+		// fmt.Println("Called GC")
+		for _, wrkr := range OnGoingTasks {
+			if time.Now().Sub(wrkr.StartTime) > (10 * time.Second) {
+				// fmt.Println("_______________________GC START______________________________")
+	
+				// Remove the wrkr from OngoingTasks and add their tasks for reassignment in Map or Reduce
+				// fmt.Println("Ongoing Tasks are :  ", OnGoingTasks, time.Now().Sub(wrkr.StartTime))
 
-			// Remove the wrkr from OngoingTasks and add their tasks for reassignment in Map or Reduce
-			fmt.Println("Ongoing Tasks are :  ", OnGoingTasks, time.Now().Sub(wrkr.StartTime))
+				removedWorker := OnGoingTasks[wrkr.Id]
+				delete(OnGoingTasks, wrkr.Id)
+				// fmt.Println("Removed worker is :", removedWorker.Id, removedWorker.State)
 
-			removedWorker := OnGoingTasks[wrkr.Id]
-			delete(OnGoingTasks, wrkr.Id)
-			fmt.Println("Removed worker is :", removedWorker.Id, removedWorker.Task)
-
-			// OnGoingTasks = append(OnGoingTasks[:indx], OnGoingTasks[indx+1:]...)
-			fmt.Println("Ongoing tasks after removiing dead worker is :", OnGoingTasks)
-			Reassign(removedWorker)
-			fmt.Println("_______________________GC END______________________________")
-
+				// OnGoingTasks = append(OnGoingTasks[:indx], OnGoingTasks[indx+1:]...)
+				// fmt.Println("Ongoing tasks after removiing dead worker is :", OnGoingTasks)
+				Reassign(removedWorker)
+				// fmt.Println("_______________________GC END______________________________")
+	
+			}
 		}
+		Lok.Unlock()
 	}
-	Lok.Unlock()
 }
 
 // reassign task from the given worker
 func Reassign(wrkr WorkerDetails) {
 	alreadyAssigned := TaskAlreadyAssigned(wrkr)
-	if wrkr.Task == "Map" {
+	if wrkr.State == "Map" {
 		if !alreadyAssigned {
 			Master.MapTaskFiles = append(Master.MapTaskFiles, wrkr.MapFileName)
 			fmt.Println("Worker reassigned to Map ", Master.MapTaskFiles)
 		}
-	} else if wrkr.Task == "Reduce" {
+	} else if wrkr.State == "Reduce" {
 		if !alreadyAssigned {
 			Master.ReduceTaskNumbers = append(Master.ReduceTaskNumbers, wrkr.ReduceFileNo)
 			fmt.Println("Worker reassigned to Reduce ", Master.ReduceTaskNumbers)
@@ -164,7 +172,7 @@ func Reassign(wrkr WorkerDetails) {
 
 // Check if filename is in list for task assignment in
 func TaskAlreadyAssigned(wrkr WorkerDetails) bool {
-	if wrkr.Task == "Map" {
+	if wrkr.State == "Map" {
 		for _, file := range Master.MapTaskFiles {
 			if wrkr.MapFileName == file {
 				return true
@@ -172,7 +180,7 @@ func TaskAlreadyAssigned(wrkr WorkerDetails) bool {
 
 		}
 		return false
-	} else if wrkr.Task == "Reduce" {
+	} else if wrkr.State == "Reduce" {
 		for _, TaskNo := range Master.ReduceTaskNumbers {
 			if wrkr.ReduceFileNo == TaskNo {
 				return true
@@ -185,7 +193,7 @@ func TaskAlreadyAssigned(wrkr WorkerDetails) bool {
 
 // Make temporary files permanent
 func MakePermanent(wrkr *WorkerDetails) {
-	if wrkr.Task == "Map" {
+	if wrkr.State == "Map" {
 		for i := 0; i < wrkr.R; i++ {
 			renameFrom := fmt.Sprint("mr-inter-", wrkr.Id, "-", i, ".tmp")
 			renameTo := fmt.Sprint("mr-inter-", wrkr.Id, "-", i)
@@ -240,22 +248,23 @@ func (m *MasterDetails) server() {
 //
 func (m *MasterDetails) Done() bool {
 	ret := false
-	GC()
 	// Your code here.
-	fmt.Println("Completed Reduce tasks are :",Master.CompletedReduceTaskNumbers, len(Master.CompletedReduceTaskNumbers))
+	// fmt.Println("Completed Reduce tasks are :",Master.CompletedReduceTaskNumbers, len(Master.CompletedReduceTaskNumbers))
+	Lok.Lock()
 	if len(Master.CompletedMapTasks) == Master.TotalMapTasks && len(Master.CompletedReduceTaskNumbers) == Master.R {
-		fmt.Println("_____________________________________________________")
+		// fmt.Println("_____________________________________________________")
 
-		fmt.Println("_____________________________________________________")
+		// fmt.Println("_____________________________________________________")
 
-		fmt.Println("_____________________________________________________")
+		// fmt.Println("_____________________________________________________")
 
-		fmt.Println("_____________________________________________________")
+		// fmt.Println("_____________________________________________________")
 
-		fmt.Println(Master)
+		// fmt.Println(Master)
 		ret = true
 
 	}
+	Lok.Unlock()
 
 	return ret
 }
