@@ -1,4 +1,4 @@
-This is a lab project for the MIT 6.824 graduate course which I implemented.
+This is a lab project to implement Map-Reduce for the MIT 6.824 graduate course.
 
 Prerequisites for taking this course: Computation Structures (6.004) and one of Computer System Engineering (6.033) or Operating System Engineering (6.828), or equivalent. Substantial programming experience will be helpful for the lab assignments.
 
