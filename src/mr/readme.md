@@ -5,6 +5,7 @@ Prerequisites for taking this course: Computation Structures (6.004) and one of 
 What I had done : Among courses only Computation Structures, in case of programming experience : I wrote a compiler and operating system( very very basic) based on a course Nand2Tetris, I had built a website in flask (~3k lines of code) and a few small projects.
 
 How did I overcome the knowledge gap due to other requirements I did not have ? 
+
 I extensively read about concurrency, threads and RPC's from various resourses until I was able to understand how they are implemented in operating systems and follow the discussion in class. I think it is possible to implement labs by being ignorant to operating systems but after reading operating systems I found that one gains knowledge of what things can cause fault or delays in a distributed systems due to operating systems and how virtual machines can be implemented.
 
 I think the role of this lab is to make the students familiar with GO, threads, RPC, implementing research papers. These reasons also make this lab difficult to implement for someone like me with not very much programming experience, I overcame this lack of experience by gaining experience on this lab although the code quality is not good in this lab but it improved in Lab 2 and 3. 
