@@ -1,10 +1,10 @@
 This is a lab project to implement Map-Reduce for the MIT 6.824 graduate course.
 
-Prerequisites for taking this course: Computation Structures (6.004) and one of Computer System Engineering (6.033) or Operating System Engineering (6.828), or equivalent. Substantial programming experience will be helpful for the lab assignments.
+**Prerequisites for taking this course:** Computation Structures (6.004) and one of Computer System Engineering (6.033) or Operating System Engineering (6.828), or equivalent. Substantial programming experience will be helpful for the lab assignments.
 
-What I had done : Among courses only Computation Structures, in case of programming experience : I wrote a compiler and operating system( very very basic) based on a course Nand2Tetris, I had built a website in flask (~3k lines of code) and a few small projects.
+**What I had done :** Among courses only Computation Structures, in case of programming experience : I wrote a compiler and operating system( very very basic) based on a course Nand2Tetris, I had built a website in flask (~3k lines of code) and a few small projects.
 
-How did I overcome the knowledge gap due to other requirements I did not have ? 
+**How did I overcome the knowledge gap due to other requirements I did not have ?**
 
 I extensively read about concurrency, threads and RPC's from various resourses until I was able to understand how they are implemented in operating systems and follow the discussion in class. I think it is possible to implement labs by being ignorant to operating systems but after reading operating systems I found that one gains knowledge of what things can cause fault or delays in a distributed systems due to operating systems and how virtual machines can be implemented.
 
