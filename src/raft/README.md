@@ -1,3 +1,5 @@
+NOTE : Checkout the `nraft.go` file instead of `raft.go` because all my implementation is in `nraft.go`
+
 This is a lab project to implement Raft Consensus Algorithm for the MIT 6.824 graduate course.
 
 Implemented leader election, log replication, accelerated log backtracking and state persistence using GO 
